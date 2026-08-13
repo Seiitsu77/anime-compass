@@ -809,6 +809,7 @@ class AnimeRecommender:
         limit: int = 12,
         top_k: int | None = None,
         diagnostics: dict[str, Any] | None = None,
+        include_explanations: bool = True,
     ) -> list[dict[str, Any]]:
         recommend_started = time.perf_counter()
         session_profile = session_profile or {}
@@ -1141,40 +1142,45 @@ class AnimeRecommender:
                 "session": positive_score(session_score),
                 "novelty": positive_score(self._novelty_score(item, novelty_preference)),
             }
-            contributions = {channel: effective_weights[channel] * signals[channel] for channel in configured_weights}
-            total = sum(contributions.values())
-            breakdown = {
-                channel: {
-                    "raw_score": round(signals[channel], 6),
-                    "normalized_score": round(signals[channel], 6),
-                    "configured_weight": round(configured_weights[channel], 6),
-                    "effective_weight": round(effective_weights[channel], 6),
-                    "weighted_contribution": round(contributions[channel], 6),
-                    "active": active_channels[channel],
-                    "inactive_reason": None if active_channels[channel] else inactive_reasons.get(channel),
+            total = sum(effective_weights[channel] * signals[channel] for channel in configured_weights)
+            if include_explanations:
+                breakdown = {
+                    channel: {
+                        "raw_score": round(signals[channel], 6),
+                        "normalized_score": round(signals[channel], 6),
+                        "configured_weight": round(configured_weights[channel], 6),
+                        "effective_weight": round(effective_weights[channel], 6),
+                        "weighted_contribution": round(effective_weights[channel] * signals[channel], 6),
+                        "active": active_channels[channel],
+                        "inactive_reason": None if active_channels[channel] else inactive_reasons.get(channel),
+                    }
+                    for channel in configured_weights
                 }
-                for channel in configured_weights
-            }
-            reasons = self.explain(
-                item,
-                liked_ids=liked_ids,
-                selected_genres=all_include_genres,
-                query=preference_text,
-                signals=signals,
-                matched_voice_actor_roles=matched_actor_roles,
-                matched_required_studios=[
-                    studio for studio in item.get("studios", []) if normalize_label(studio) in required_studio_keys
-                ],
-                matched_required_staff=[
-                    person.get("name")
-                    for person in item.get("staff_relationships", item.get("staff", []))
-                    if normalize_label(person.get("name")) in required_staff_keys
-                ],
-                matched_required_characters=[
-                    name for name in item.get("character_names", []) if normalize_label(name) in required_character_keys
-                ],
-                matched_required_entities=matched_entity_relationships,
-            )
+                reasons = self.explain(
+                    item,
+                    liked_ids=liked_ids,
+                    selected_genres=all_include_genres,
+                    query=preference_text,
+                    signals=signals,
+                    matched_voice_actor_roles=matched_actor_roles,
+                    matched_required_studios=[
+                        studio for studio in item.get("studios", []) if normalize_label(studio) in required_studio_keys
+                    ],
+                    matched_required_staff=[
+                        person.get("name")
+                        for person in item.get("staff_relationships", item.get("staff", []))
+                        if normalize_label(person.get("name")) in required_staff_keys
+                    ],
+                    matched_required_characters=[
+                        name
+                        for name in item.get("character_names", [])
+                        if normalize_label(name) in required_character_keys
+                    ],
+                    matched_required_entities=matched_entity_relationships,
+                )
+            else:
+                breakdown = {}
+                reasons = []
             scored.append((total, item, reasons, signals, breakdown))
 
         scored.sort(key=lambda pair: pair[0], reverse=True)
@@ -1207,6 +1213,11 @@ class AnimeRecommender:
                 if series in seen_series:
                     continue
                 seen_series.add(series)
+
+            if not include_explanations:
+                results.append({"id": int(item["id"])})
+                selected_items.append(item)
+                continue
 
             public = self.public_item(item)
             diversity_penalty = self._diversity_penalty(item, selected_items)

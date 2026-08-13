@@ -403,6 +403,7 @@ class CurrentHybridModel:
             "candidate_catalog": "full catalog minus exact training-known IDs",
             "semantic_embedding_available": recommender.semantic_index is not None,
             "llm_used": False,
+            "ranking_only": True,
         }
         self.resident_array_bytes = _recommender_array_bytes(recommender)
 
@@ -418,6 +419,7 @@ class CurrentHybridModel:
             exclude_related_series=False,
             limit=k,
             diagnostics=diagnostics,
+            include_explanations=False,
         )
         return OfflineRecommendation([int(item["id"]) for item in results], diagnostics)
 

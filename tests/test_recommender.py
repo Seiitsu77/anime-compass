@@ -608,6 +608,22 @@ class AnimeRecommenderTests(unittest.TestCase):
         recommender.recommend(liked_ids=liked_ids, session_profile=profile, limit=5)
         self.assertEqual(calls, 1)
 
+    def test_ranking_only_path_preserves_filters_scores_and_reranked_ids(self) -> None:
+        recommender = AnimeRecommender(CATALOG)
+        arguments = {
+            "liked_ids": [1, 2, 4],
+            "excluded_ids": [6],
+            "session_profile": {"preferred_genres": ["Drama"]},
+            "diversity_strength": 0.18,
+            "exclude_related_series": False,
+            "limit": 6,
+        }
+        full = recommender.recommend(**arguments)
+        ranking_only = recommender.recommend(**arguments, include_explanations=False)
+
+        self.assertEqual([item["id"] for item in ranking_only], [item["id"] for item in full])
+        self.assertTrue(all(set(item) == {"id"} for item in ranking_only))
+
     def test_recommend_uses_embedding_and_svd_channels_for_liked_title(self) -> None:
         recommender = AnimeRecommender(CATALOG)
         results = recommender.recommend(liked_titles=["Space Quest"], limit=3)
