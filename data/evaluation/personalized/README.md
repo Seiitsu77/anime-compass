@@ -21,8 +21,9 @@ pipeline measures per-user ranking on held-out positive ratings.
   uses all test positives for binary relevance.
 - Every candidate model sees the same catalog and user IDs. Exact training-known positives, neutral ratings,
   explicit negatives, and ignored ratings are excluded from rankings.
-- Sampled runs default to a deterministic activity-stratified hash sample so sparse, medium, and heavy users
-  are represented; `--sampling-strategy uniform` is also available. Full runs evaluate every eligible user.
+- Sampled runs default to a deterministic uniform hash sample for population-level aggregate estimates. An
+  activity-balanced equal-quota sample is available with `--sampling-strategy stratified`; its aggregate metrics
+  are not population-weighted and should be used for sparse/medium/heavy diagnostics, not overall claims.
 - Popularity and item-popularity buckets use positive training counts only. CountSketch is rebuilt from
   observed training ratings only. Rating-derived catalog aggregates used by the hybrid are rebuilt or cleared
   from training data.
@@ -33,10 +34,22 @@ pipeline measures per-user ranking on held-out positive ratings.
 2. `countsketch_cf`: the existing user-centred CountSketch item-similarity algorithm, trained on the split's
    observed training ratings; profiles use positive training items.
 3. `current_hybrid`: the current production hybrid, invoked directly without HTTP, LLM explanations,
-   semantic-network calls, or frontend work. Content metadata is retained; rating-derived aggregates are
-   train-only.
+   deterministic explanation/result-payload construction, semantic-network calls, or frontend work. The new
+   ranking-only interface preserves filters, scores, and diversity ordering while returning IDs only. Content
+   metadata is retained; rating-derived aggregates are train-only. Production behavior remains the default.
 
 No LightFM, LightGCN, SASRec, or other new model is included in this phase.
+
+## Committed smoke results
+
+- [`results/uniform_smoke/report.md`](results/uniform_smoke/report.md): primary 100-user uniform aggregate sample.
+- [`results/balanced_smoke/report.md`](results/balanced_smoke/report.md): 30-user equal-quota activity diagnostic
+  (10 sparse, 10 medium, 10 heavy); do not treat its aggregate as population-weighted.
+
+In the uniform sample, CountSketch beats popularity credibly on NDCG@10 and Recall@10. The hybrid has the highest
+point estimates, but its incremental NDCG@10/Recall@10 intervals versus CountSketch cross zero. Both personalized
+models expose more than 99.6% head items and recover none of the sampled mid-tail positives at 10, so the current
+evidence supports collaborative personalization but not a claim of strong long-tail discovery.
 
 ## Metric definitions
 
@@ -50,6 +63,8 @@ No LightFM, LightGCN, SASRec, or other new model is included in this phase.
 - Popularity bias is the per-user mean normalized-log popularity of recommendations minus that of the user's
   positive training history. Positive values mean recommendations skew more popular than the profile.
 - Intra-list diversity is the mean pairwise Jaccard distance between catalog genre sets.
+- Beyond-accuracy metrics use the configured top-20 recommendation lists by default. Serialization timing covers
+  the compact offline ranking IDs, not a production HTTP payload.
 - User activity uses positive training interactions: sparse `1–4`, medium `5–19`, heavy `20+`. Sparse users
   remain possible because a five-positive user has three training positives after holdout.
 - Item buckets rank the full catalog by positive training count with anime ID as a deterministic tie-breaker:
@@ -67,8 +82,11 @@ python -m pytest -q
 # Fast pipeline check using only the first 500 source users and 3 evaluation users
 python scripts/evaluate_personalized.py --source-user-limit 500 --max-evaluation-users 3 --bootstrap-iterations 100 --output-dir data/evaluation/personalized/results/pipeline_smoke
 
-# Representative smoke: full training split, deterministic 10-user evaluation sample
-python scripts/evaluate_personalized.py --max-evaluation-users 10 --bootstrap-iterations 2000 --output-dir data/evaluation/personalized/results/representative_smoke
+# Uniform aggregate smoke: full training split, deterministic 100-user sample
+python scripts/evaluate_personalized.py --sampling-strategy uniform --max-evaluation-users 100 --bootstrap-iterations 2000 --output-dir data/evaluation/personalized/results/uniform_smoke
+
+# Activity-balanced diagnostic smoke: 10 sparse, 10 medium, and 10 heavy users
+python scripts/evaluate_personalized.py --sampling-strategy stratified --max-evaluation-users 30 --bootstrap-iterations 2000 --output-dir data/evaluation/personalized/results/balanced_smoke
 
 # Full eligible-user evaluation (currently computationally expensive for the Python hybrid)
 python scripts/evaluate_personalized.py --max-evaluation-users 0 --bootstrap-iterations 2000 --output-dir data/evaluation/personalized/results/full
@@ -78,6 +96,10 @@ The persistent split and train-only model artifacts are ignored by Git because t
 Each result directory contains `results.json`; aggregate, segment, item-bucket, engineering, and paired-bootstrap
 CSVs; compressed per-user metrics; `report.md`; and a checksummed `manifest.json`. Derived report/CSV views can
 be recreated without inference using `python scripts/evaluate_personalized.py --refresh-output <result-dir>`.
+The committed [`metadata/split_seed42_pos8.json`](metadata/split_seed42_pos8.json) records the full archive split's
+checksums, counts, configuration, build time, and successful accounting audit without committing the 221 MiB SQLite file.
+Its 906,417 out-of-candidate rating rows map to the 1,348 raw adult titles intentionally excluded by the catalog
+pipeline; they are reported as filtered rows, not silently treated as unobserved feedback.
 
 ## Interpretation limits
 

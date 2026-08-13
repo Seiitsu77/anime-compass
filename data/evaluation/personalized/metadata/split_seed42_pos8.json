@@ -1,0 +1,62 @@
+{
+  "schema_version": 3,
+  "method": "deterministic per-user random positive holdout",
+  "methodology_note": "Because interaction timestamps are unavailable, this evaluation measures preference reconstruction/generalization under a deterministic user-stratified random holdout, not chronological next-item prediction.",
+  "source_file": "rating_complete.csv",
+  "source_size_bytes": 817897580,
+  "dataset_sha256": "b60519348a90bd5e02c25355b374f7ca055a0637a237f0e163447953b13ffaa0",
+  "dataset_sha256_scope": "full_file",
+  "catalog_sha256": "2ef54a712f63eec2adc33f21bd431fc66ab097ba135ab440fd3d773f84668c75",
+  "catalog_ids_sha256": "64f84b07112b7132cbaac3ad2da25aa5a6b985a78b0fcfa379bf0b23bebdcde0",
+  "split_artifact_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038",
+  "catalog_items": 18064,
+  "rows_scanned": 57633278,
+  "users_before_filter": 310059,
+  "users_after_filter": 289601,
+  "eligible_user_segments": {
+    "sparse_1_to_4_train_positives": 6343,
+    "medium_5_to_19_train_positives": 43799,
+    "heavy_20_plus_train_positives": 239459
+  },
+  "positive_ratings": 30875410,
+  "train_positive_interactions": 24916911,
+  "validation_positive_interactions": 2966423,
+  "test_positive_interactions": 2992076,
+  "explicit_negative_ratings": 6054274,
+  "neutral_ratings": 19797177,
+  "ignored_ratings": 0,
+  "orphan_rows": 906417,
+  "orphan_reason": "The 1,348 raw catalog IDs absent from the processed candidate catalog are all adult titles intentionally excluded by the data pipeline.",
+  "train_positive_sparsity": 0.004448728830034865,
+  "build_duration_seconds": 181.112676,
+  "split_config": {
+    "seed": 42,
+    "minimum_positives": 5,
+    "feedback": {
+      "positive_threshold": 8,
+      "neutral_min": 6,
+      "neutral_max": 7,
+      "negative_max": 5
+    },
+    "holdout_rules": {
+      "below_configured_minimum": "fewer than 5 positives: excluded from evaluation; positives remain training-only",
+      "5_to_9": {
+        "validation": 1,
+        "test": 1
+      },
+      "10_to_19": {
+        "validation": 1,
+        "test": 2
+      },
+      "20_plus": "floor(10%) validation and floor(10%) test, minimum one each"
+    }
+  },
+  "audit": {
+    "passed": true,
+    "stored_users": 310059,
+    "eligible_users": 289601,
+    "stored_ratings": 56726861,
+    "orphan_rows": 906417,
+    "accounting_identity": "stored_ratings + orphan_rows = rows_scanned"
+  }
+}

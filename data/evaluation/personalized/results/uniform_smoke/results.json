@@ -1,0 +1,496 @@
+{
+  "build_details": {
+    "countsketch": {
+      "metadata": {
+        "artifact_version": 1,
+        "build_duration_seconds": 65.769123,
+        "catalog_items": 18064,
+        "dimensions": 384,
+        "global_rating_mean": 7.386842,
+        "items_with_ratings": 15549,
+        "method": "user-centred CountSketch item similarity",
+        "projection_width": 128,
+        "projections": 3,
+        "ratings_used": 50768362,
+        "split_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038",
+        "training_source": "personalized split train ratings",
+        "users_seen": 309484
+      },
+      "process_peak_rss_after_bytes": 724160512,
+      "process_rss_after_bytes": 548802560,
+      "process_rss_before_bytes": 548761600,
+      "python_tracemalloc_peak_bytes": null,
+      "reused": true
+    },
+    "hybrid": {
+      "measurement_note": "RSS delta is used because tracemalloc materially distorts hybrid initialization.",
+      "process_rss_after_bytes": 861044736,
+      "process_rss_before_bytes": 578560000,
+      "process_rss_delta_bytes": 282484736
+    },
+    "split_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038",
+    "training_statistics": {
+      "duration_seconds": 50.0404547000071,
+      "positive_interactions": 24916911,
+      "process_rss_after_bytes": 548409344,
+      "process_rss_before_bytes": 548372480,
+      "process_rss_delta_bytes": 36864,
+      "python_tracemalloc_peak_bytes": null
+    }
+  },
+  "dataset": {
+    "catalog_items": 18064,
+    "catalog_sha256": "2ef54a712f63eec2adc33f21bd431fc66ab097ba135ab440fd3d773f84668c75",
+    "dataset_sha256": "b60519348a90bd5e02c25355b374f7ca055a0637a237f0e163447953b13ffaa0",
+    "dataset_sha256_scope": "full_file",
+    "explicit_negative_ratings": 6054274,
+    "ignored_ratings": 0,
+    "neutral_ratings": 19797177,
+    "rating_threshold": 8,
+    "source_file": "rating_complete.csv",
+    "source_orphan_rows": 906417,
+    "source_rows_scanned": 57633278,
+    "source_user_limit": null,
+    "split_audit": {
+      "eligible_users": 289601,
+      "orphan_rows": 906417,
+      "passed": true,
+      "stored_ratings": 56726861,
+      "stored_users": 310059
+    },
+    "split_build_duration_seconds": 181.112676,
+    "split_seed": 42,
+    "split_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038",
+    "test_positive_interactions": 2992076,
+    "train_positive_interactions": 24916911,
+    "train_positive_sparsity": 0.004448728830034865,
+    "users_after_filter": 289601,
+    "users_before_filter": 310059,
+    "validation_positive_interactions": 2966423
+  },
+  "environment": {
+    "logical_cpu_count": 24,
+    "numpy": "2.5.2",
+    "peak_process_rss_bytes": 926289920,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "python": "3.12.13"
+  },
+  "evaluation_duration_seconds": 215.48947,
+  "evaluation_population": {
+    "aggregate_weighting": "unweighted macro-average over sampled users; no population reweighting",
+    "eligible_population_segment_counts": {
+      "heavy": 239459,
+      "medium": 43799,
+      "sparse": 6343
+    },
+    "evaluated_users": 100,
+    "sampling": "deterministic uniform hash sample of eligible users",
+    "segment_counts": {
+      "heavy": 78,
+      "medium": 22
+    },
+    "user_ids_sha256": "f4bc0e456b8d9eb3760bbf51bbb2ffde45478d22dc61e8a9d01167af46d2e638"
+  },
+  "generated_at": "2026-08-13T04:25:19.089807+00:00",
+  "item_popularity_bucket_definition": {
+    "head": "top 20% of catalog items by count",
+    "long_tail": "bottom 50% of catalog items by count, including zero-count items",
+    "mid_tail": "next 30% of catalog items by count",
+    "source": "positive training interaction count only",
+    "tie_breaker": "anime_id ascending"
+  },
+  "methodology_note": "Because interaction timestamps are unavailable, this evaluation measures preference reconstruction/generalization under a deterministic user-stratified random holdout, not chronological next-item prediction.",
+  "metric_definitions": {
+    "beyond_accuracy_scope": "Coverage, novelty, popularity bias, exposure, and ILD use top-20 rankings.",
+    "catalog_coverage": "Unique recommended catalog IDs divided by candidate catalog size.",
+    "intra_list_diversity": "Mean pairwise Jaccard distance over catalog genre sets; empty/empty distance is zero.",
+    "mrr": "Reciprocal rank of the first test positive within the top 20.",
+    "novelty_bits": "Mean -log2((train positive count + 1)/(all train positives + catalog size)).",
+    "popularity_bias": "Mean per-user normalized-log popularity of recommendations minus training-positive history.",
+    "ranking": "Per-user binary relevance; aggregate values are unweighted means across users.",
+    "serialization": "Timing covers compact ranking-ID JSON serialization, not the production HTTP response payload."
+  },
+  "models": [
+    {
+      "catalog_coverage": 0.003930469441984057,
+      "engineering": {
+        "artifact": {
+          "files": [
+            "popularity_train_only.npz"
+          ],
+          "sha256": "cbf60cf21457ac6f49119cba62a7d076c0e7f56da4e0c83954c295b2da9e632c",
+          "size_bytes": 57523
+        },
+        "build_duration_seconds": 50.0404547000071,
+        "inference_latency_p50_ms": 0.41385000076843426,
+        "inference_latency_p95_ms": 0.5384149917517789,
+        "resident_array_bytes": 433536,
+        "serialization_latency_p50_ms": 0.021700005163438618,
+        "serialization_latency_p95_ms": 0.025105001986958086,
+        "stage_latency_ms": {}
+      },
+      "evaluated_users": 100,
+      "heldout_item_popularity": {
+        "head": {
+          "heldout_items": 916,
+          "ndcg_at_10": 0.10372760346235126,
+          "recall_at_10": 0.08845274342333165,
+          "users": 100
+        },
+        "long_tail": {
+          "heldout_items": 0,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 0
+        },
+        "mid_tail": {
+          "heldout_items": 34,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 17
+        }
+      },
+      "hit_rate_at_10": 0.42,
+      "intra_list_diversity": 0.8219387990664305,
+      "model": "popularity",
+      "model_config": {
+        "signal": "positive training interaction count",
+        "tie_breaker": "anime_id"
+      },
+      "model_version": "train-positive-count-v1",
+      "mrr": 0.22647006180094412,
+      "ndcg_at_10": 0.10354515469423844,
+      "ndcg_at_20": 0.11840900784356663,
+      "novelty_bits": 8.41533456942939,
+      "popularity_bias": 0.12093671554127776,
+      "recall_at_10": 0.08765303735818282,
+      "recall_at_20": 0.13667089480492525,
+      "recommendation_exposure": {
+        "head": 1.0,
+        "long_tail": 0.0,
+        "mid_tail": 0.0,
+        "unknown": 0.0
+      },
+      "user_segments": {
+        "heavy": {
+          "hit_rate_at_10": 0.47435897435897434,
+          "ndcg_at_10": 0.11061821902426829,
+          "recall_at_10": 0.08032440686946518,
+          "users": 78
+        },
+        "medium": {
+          "hit_rate_at_10": 0.22727272727272727,
+          "ndcg_at_10": 0.07846792661504166,
+          "recall_at_10": 0.11363636363636363,
+          "users": 22
+        },
+        "sparse": {
+          "hit_rate_at_10": 0.0,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 0
+        }
+      }
+    },
+    {
+      "catalog_coverage": 0.021368467670504872,
+      "engineering": {
+        "artifact": {
+          "files": [
+            "countsketch_train_only.npz"
+          ],
+          "sha256": "8eed258b731ff0efd7957a67146faa0116003f293872b4e70854c99a35fdaf91",
+          "size_bytes": 14967050
+        },
+        "build_duration_seconds": 65.769123,
+        "inference_latency_p50_ms": 9.654250003222842,
+        "inference_latency_p95_ms": 11.490039994532708,
+        "resident_array_bytes": 28179840,
+        "serialization_latency_p50_ms": 0.023100001271814108,
+        "serialization_latency_p95_ms": 0.0261599947407376,
+        "stage_latency_ms": {}
+      },
+      "evaluated_users": 100,
+      "heldout_item_popularity": {
+        "head": {
+          "heldout_items": 916,
+          "ndcg_at_10": 0.13980817612464333,
+          "recall_at_10": 0.1484632609926727,
+          "users": 100
+        },
+        "long_tail": {
+          "heldout_items": 0,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 0
+        },
+        "mid_tail": {
+          "heldout_items": 34,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 17
+        }
+      },
+      "hit_rate_at_10": 0.53,
+      "intra_list_diversity": 0.8251240904563272,
+      "model": "countsketch_cf",
+      "model_config": {
+        "dimensions": 384,
+        "method": "user-centred CountSketch item similarity",
+        "profile_feedback": "positive training interactions",
+        "training_feedback": "all observed train ratings, classes kept distinct"
+      },
+      "model_version": "user-centred-countsketch-v1",
+      "mrr": 0.25409085255989283,
+      "ndcg_at_10": 0.1391687030237782,
+      "ndcg_at_20": 0.1594288425907519,
+      "novelty_bits": 9.495308691210196,
+      "popularity_bias": 0.05716270894367647,
+      "recall_at_10": 0.14618567394108278,
+      "recall_at_20": 0.2225797245075591,
+      "recommendation_exposure": {
+        "head": 0.996,
+        "long_tail": 0.0,
+        "mid_tail": 0.004,
+        "unknown": 0.0
+      },
+      "user_segments": {
+        "heavy": {
+          "hit_rate_at_10": 0.5897435897435898,
+          "ndcg_at_10": 0.14228725395960254,
+          "recall_at_10": 0.12331496659113182,
+          "users": 78
+        },
+        "medium": {
+          "hit_rate_at_10": 0.3181818181818182,
+          "ndcg_at_10": 0.12811202243312833,
+          "recall_at_10": 0.22727272727272727,
+          "users": 22
+        },
+        "sparse": {
+          "hit_rate_at_10": 0.0,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 0
+        }
+      }
+    },
+    {
+      "catalog_coverage": 0.02103631532329495,
+      "engineering": {
+        "artifact": {
+          "files": [
+            "countsketch_train_only.npz",
+            "anime_catalog.json"
+          ],
+          "sha256": "be500c0ad0922e9eddcbca091549698d6a4049d2cdda8af24027187bfd685925",
+          "size_bytes": 134338587
+        },
+        "build_duration_seconds": 7.851967599999625,
+        "inference_latency_p50_ms": 1151.5797500032932,
+        "inference_latency_p95_ms": 1604.0496449917555,
+        "resident_array_bytes": 45595008,
+        "serialization_latency_p50_ms": 0.02305000089108944,
+        "serialization_latency_p95_ms": 0.028544998349389058,
+        "stage_latency_ms": {
+          "candidate_generation_and_channel_scoring": {
+            "p50": 899.1945000000001,
+            "p95": 1346.59375
+          },
+          "diversity_reranking": {
+            "p50": 225.1805,
+            "p95": 267.8404
+          },
+          "entity_resolution": {
+            "p50": 0.003,
+            "p95": 0.003
+          },
+          "total": {
+            "p50": 1137.1174999999998,
+            "p95": 1590.31695
+          }
+        }
+      },
+      "evaluated_users": 100,
+      "heldout_item_popularity": {
+        "head": {
+          "heldout_items": 916,
+          "ndcg_at_10": 0.1513860978419889,
+          "recall_at_10": 0.16065924035776974,
+          "users": 100
+        },
+        "long_tail": {
+          "heldout_items": 0,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 0
+        },
+        "mid_tail": {
+          "heldout_items": 34,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 17
+        }
+      },
+      "hit_rate_at_10": 0.55,
+      "intra_list_diversity": 0.748821844456713,
+      "model": "current_hybrid",
+      "model_config": {
+        "candidate_catalog": "full catalog minus exact training-known IDs",
+        "catalog_aggregate_fields": "rating-derived fields rebuilt or cleared from training data",
+        "diversity_strength": 0.12,
+        "llm_used": false,
+        "profile_feedback": "positive training interactions",
+        "ranking_only": true,
+        "semantic_embedding_available": false,
+        "weights": {
+          "collaborative": 0.22,
+          "creator": 0.05,
+          "dense": 0.08,
+          "lsa": 0.04,
+          "metadata": 0.16,
+          "novelty": 0.03,
+          "quality": 0.13,
+          "semantic_embedding": 0.14,
+          "session": 0.05,
+          "synopsis": 0.1
+        }
+      },
+      "model_version": "hybrid-collaborative-v4",
+      "mrr": 0.2650140358008005,
+      "ndcg_at_10": 0.15055237090431153,
+      "ndcg_at_20": 0.17377795441753785,
+      "novelty_bits": 9.547346268541071,
+      "popularity_bias": 0.05408981605384613,
+      "recall_at_10": 0.15864769261512957,
+      "recall_at_20": 0.2413333655005391,
+      "recommendation_exposure": {
+        "head": 0.9975,
+        "long_tail": 0.0005,
+        "mid_tail": 0.002,
+        "unknown": 0.0
+      },
+      "user_segments": {
+        "heavy": {
+          "hit_rate_at_10": 0.6153846153846154,
+          "ndcg_at_10": 0.15536745407491004,
+          "recall_at_10": 0.14570217001939684,
+          "users": 78
+        },
+        "medium": {
+          "hit_rate_at_10": 0.3181818181818182,
+          "ndcg_at_10": 0.13348071239037154,
+          "recall_at_10": 0.20454545454545456,
+          "users": 22
+        },
+        "sparse": {
+          "hit_rate_at_10": 0.0,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 0
+        }
+      }
+    }
+  ],
+  "paired_bootstrap": [
+    {
+      "ci_excludes_zero": true,
+      "ci_lower": 0.00425692535842443,
+      "ci_upper": 0.06898373048617705,
+      "difference": 0.035623548329539775,
+      "iterations": 2000,
+      "left_model": "countsketch_cf",
+      "metric": "ndcg_at_10",
+      "right_model": "popularity",
+      "seed": 42,
+      "users": 100
+    },
+    {
+      "ci_excludes_zero": true,
+      "ci_lower": 0.016860323228894896,
+      "ci_upper": 0.1053166800010248,
+      "difference": 0.05853263658289998,
+      "iterations": 2000,
+      "left_model": "countsketch_cf",
+      "metric": "recall_at_10",
+      "right_model": "popularity",
+      "seed": 42,
+      "users": 100
+    },
+    {
+      "ci_excludes_zero": false,
+      "ci_lower": -0.014031685314257743,
+      "ci_upper": 0.037554148236776864,
+      "difference": 0.011383667880533325,
+      "iterations": 2000,
+      "left_model": "current_hybrid",
+      "metric": "ndcg_at_10",
+      "right_model": "countsketch_cf",
+      "seed": 42,
+      "users": 100
+    },
+    {
+      "ci_excludes_zero": false,
+      "ci_lower": -0.03297887620593667,
+      "ci_upper": 0.05608463499761238,
+      "difference": 0.012462018674046766,
+      "iterations": 2000,
+      "left_model": "current_hybrid",
+      "metric": "recall_at_10",
+      "right_model": "countsketch_cf",
+      "seed": 42,
+      "users": 100
+    },
+    {
+      "ci_excludes_zero": true,
+      "ci_lower": 0.011997959807854498,
+      "ci_upper": 0.08107872064858641,
+      "difference": 0.0470072162100731,
+      "iterations": 2000,
+      "left_model": "current_hybrid",
+      "metric": "ndcg_at_10",
+      "right_model": "popularity",
+      "seed": 42,
+      "users": 100
+    },
+    {
+      "ci_excludes_zero": true,
+      "ci_lower": 0.03191181344597993,
+      "ci_upper": 0.1131693007460786,
+      "difference": 0.07099465525694675,
+      "iterations": 2000,
+      "left_model": "current_hybrid",
+      "metric": "recall_at_10",
+      "right_model": "popularity",
+      "seed": 42,
+      "users": 100
+    }
+  ],
+  "run_config": {
+    "bootstrap_iterations": 2000,
+    "countsketch_projections": 3,
+    "countsketch_width": 128,
+    "force_model_rebuild": false,
+    "max_evaluation_users": 100,
+    "progress_every": 10,
+    "recommendation_k": 20,
+    "sample_seed": 42,
+    "sampling_strategy": "uniform"
+  },
+  "run_scope": "sampled",
+  "schema_version": 1,
+  "what_this_can_tell_us": [
+    "Personalized ranking quality under deterministic random held-out positive interactions.",
+    "Whether the current collaborative signal adds value over train-only popularity.",
+    "Whether the current hybrid adds value over its CountSketch collaborative channel.",
+    "How ranking quality changes with training-positive user activity.",
+    "Recommendation exposure and recovery across train-defined item popularity buckets."
+  ],
+  "what_this_cannot_tell_us": [
+    "Chronological next-anime prediction because the source has no interaction timestamps.",
+    "Real online click-through rate or recommendation acceptance.",
+    "Causal user satisfaction.",
+    "Production A/B-test performance without online traffic."
+  ]
+}

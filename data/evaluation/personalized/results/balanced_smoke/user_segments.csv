@@ -1,0 +1,10 @@
+model,segment,users,ndcg_at_10,recall_at_10,hit_rate_at_10
+popularity,heavy,10,0.20058468619193573,0.0995323756038042,0.7
+popularity,medium,10,0.09197207891481876,0.1,0.2
+popularity,sparse,10,0.0,0.0,0.0
+countsketch_cf,heavy,10,0.11771869925936902,0.10572577679720536,0.6
+countsketch_cf,medium,10,0.1634675581808045,0.35,0.5
+countsketch_cf,sparse,10,0.13154648767857288,0.2,0.2
+current_hybrid,heavy,10,0.20599582607719785,0.2000951461665747,0.7
+current_hybrid,medium,10,0.10377737370416742,0.15,0.3
+current_hybrid,sparse,10,0.19199945798893453,0.3,0.3

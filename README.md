@@ -141,6 +141,26 @@ The personalized methodology, commands, artifacts, and limitations are documente
 [data/evaluation/personalized/README.md](data/evaluation/personalized/README.md). No new recommender algorithm is
 introduced by that benchmark.
 
+### Personalized held-out smoke benchmark
+
+The primary result below is a deterministic uniform sample of 100 eligible users from a full-data, train-only
+split (`rating >= 8`, seed 42). It is a smoke benchmark, not a full-population result.
+
+| Model | NDCG@10 | Recall@10 | HR@10 | NDCG@20 | Recall@20 | MRR@20 | Coverage | p50 rank latency |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Popularity | 0.1035 | 0.0877 | 0.4200 | 0.1184 | 0.1367 | 0.2265 | 0.0039 | 0.41 ms |
+| CountSketch CF | 0.1392 | 0.1462 | 0.5300 | 0.1594 | 0.2226 | 0.2541 | **0.0214** | 9.65 ms |
+| Current hybrid | **0.1506** | **0.1586** | **0.5500** | **0.1738** | **0.2413** | **0.2650** | 0.0210 | 1,151.58 ms |
+
+Against popularity, CountSketch improves NDCG@10 by 3.56 percentage points (paired 95% bootstrap CI
+`[+0.43, +6.90]`). The hybrid adds 1.14 points over CountSketch, but that interval crosses zero
+(`[-1.40, +3.76]`). More than 99.6% of collaborative/hybrid exposure is still in the train-defined head bucket,
+so long-tail performance is a clear weakness. See the
+[uniform report](data/evaluation/personalized/results/uniform_smoke/report.md) and the
+[activity-balanced diagnostic](data/evaluation/personalized/results/balanced_smoke/report.md).
+
+### Catalog/agent regression benchmark
+
 The benchmark compares six actual configurations at `K=10`. One-channel runs set every unrelated channel weight to zero; the popularity baseline sorts the filtered candidate set directly.
 
 | Model | Hard filters | Entity constraints | Hit Rate@10 | Genre recovery | Coverage | Diversity | p50 ms |

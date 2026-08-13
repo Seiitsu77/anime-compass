@@ -1,0 +1,135 @@
+{
+  "experiment": {
+    "catalog_sha256": "2ef54a712f63eec2adc33f21bd431fc66ab097ba135ab440fd3d773f84668c75",
+    "dataset_sha256": "b60519348a90bd5e02c25355b374f7ca055a0637a237f0e163447953b13ffaa0",
+    "environment": {
+      "logical_cpu_count": 24,
+      "numpy": "2.5.2",
+      "peak_process_rss_bytes": null,
+      "platform": "Windows-11-10.0.26200-SP0",
+      "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+      "python": "3.12.13"
+    },
+    "evaluated_users": 30,
+    "positive_threshold": 8,
+    "run_config": {
+      "bootstrap_iterations": 2000,
+      "countsketch_projections": 3,
+      "countsketch_width": 128,
+      "force_model_rebuild": false,
+      "max_evaluation_users": 30,
+      "progress_every": 5,
+      "recommendation_k": 20,
+      "sample_seed": 42,
+      "sampling_strategy": "stratified"
+    },
+    "split_seed": 42,
+    "split_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038"
+  },
+  "generated_at": "2026-08-13T04:20:22.310805+00:00",
+  "models": [
+    {
+      "artifact": {
+        "files": [
+          "popularity_train_only.npz"
+        ],
+        "sha256": "cbf60cf21457ac6f49119cba62a7d076c0e7f56da4e0c83954c295b2da9e632c",
+        "size_bytes": 57523
+      },
+      "hyperparameters": {
+        "signal": "positive training interaction count",
+        "tie_breaker": "anime_id"
+      },
+      "name": "popularity",
+      "training_or_build_duration_seconds": 40.507854399998905,
+      "version": "train-positive-count-v1"
+    },
+    {
+      "artifact": {
+        "files": [
+          "countsketch_train_only.npz"
+        ],
+        "sha256": "8eed258b731ff0efd7957a67146faa0116003f293872b4e70854c99a35fdaf91",
+        "size_bytes": 14967050
+      },
+      "hyperparameters": {
+        "dimensions": 384,
+        "method": "user-centred CountSketch item similarity",
+        "profile_feedback": "positive training interactions",
+        "training_feedback": "all observed train ratings, classes kept distinct"
+      },
+      "name": "countsketch_cf",
+      "training_or_build_duration_seconds": 65.769123,
+      "version": "user-centred-countsketch-v1"
+    },
+    {
+      "artifact": {
+        "files": [
+          "countsketch_train_only.npz",
+          "anime_catalog.json"
+        ],
+        "sha256": "be500c0ad0922e9eddcbca091549698d6a4049d2cdda8af24027187bfd685925",
+        "size_bytes": 134338587
+      },
+      "hyperparameters": {
+        "candidate_catalog": "full catalog minus exact training-known IDs",
+        "catalog_aggregate_fields": "rating-derived fields rebuilt or cleared from training data",
+        "diversity_strength": 0.12,
+        "llm_used": false,
+        "profile_feedback": "positive training interactions",
+        "ranking_only": true,
+        "semantic_embedding_available": false,
+        "weights": {
+          "collaborative": 0.22,
+          "creator": 0.05,
+          "dense": 0.08,
+          "lsa": 0.04,
+          "metadata": 0.16,
+          "novelty": 0.03,
+          "quality": 0.13,
+          "semantic_embedding": 0.14,
+          "session": 0.05,
+          "synopsis": 0.1
+        }
+      },
+      "name": "current_hybrid",
+      "training_or_build_duration_seconds": 8.668688899997505,
+      "version": "hybrid-collaborative-v4"
+    }
+  ],
+  "outputs": {
+    "engineering.csv": {
+      "sha256": "bf9d9272f94872e45e17e8f0a8c2a36ea3a86888a75dffecba7b4c32da088af4",
+      "size_bytes": 855
+    },
+    "item_popularity.csv": {
+      "sha256": "c6544fa4214da151e83746be831a0762b38b34f195ceb2d4e780b06fe6481b79",
+      "size_bytes": 567
+    },
+    "paired_bootstrap.csv": {
+      "sha256": "e3914e19736fd96196205b12571c4c5629cd4ddd177b897526d2ecc6235e2745",
+      "size_bytes": 800
+    },
+    "per_user_metrics.csv.gz": {
+      "sha256": "33224b93277d695f50cda7091118f4a504d4a248c0b25fc0ac1ed75060325015",
+      "size_bytes": 2369
+    },
+    "report.md": {
+      "sha256": "60a6d971665d6695eba5bf52ba5ea761ab9d5c23c41fcd7b40c7dae101346919",
+      "size_bytes": 7328
+    },
+    "results.json": {
+      "sha256": "a17532c25d3e9e12418c2cbcc0c238da10acc5eb13b1b51cf50b9e2873cf0cfe",
+      "size_bytes": 16704
+    },
+    "summary.csv": {
+      "sha256": "1efac3115dfb6326737e61f0b04115f1ef7c01288626cdde28a9f24cfa9b3221",
+      "size_bytes": 755
+    },
+    "user_segments.csv": {
+      "sha256": "ef72966900df339d94065ff88e381bb743c569c44cf1991751d0fbdf04d23309",
+      "size_bytes": 552
+    }
+  },
+  "schema_version": 1
+}
