@@ -128,6 +128,19 @@ python scripts/build_semantic_embeddings.py --verify-only --offline
 
 ## Evaluation
 
+There are two deliberately separate evaluation layers:
+
+- The existing seven-case benchmark protects catalog constraints, agent routing, and qualitative recommendation
+  behavior.
+- The personalized offline benchmark uses a deterministic, leakage-safe per-user positive holdout over the
+  anonymous rating archive. It compares train-only popularity, the existing CountSketch CF model, and the current
+  complete hybrid on identical users with NDCG/Recall/HR/MRR, coverage/novelty/bias/diversity, activity and
+  long-tail slices, paired bootstrap intervals, and engineering costs.
+
+The personalized methodology, commands, artifacts, and limitations are documented in
+[data/evaluation/personalized/README.md](data/evaluation/personalized/README.md). No new recommender algorithm is
+introduced by that benchmark.
+
 The benchmark compares six actual configurations at `K=10`. One-channel runs set every unrelated channel weight to zero; the popularity baseline sorts the filtered candidate set directly.
 
 | Model | Hard filters | Entity constraints | Hit Rate@10 | Genre recovery | Coverage | Diversity | p50 ms |
