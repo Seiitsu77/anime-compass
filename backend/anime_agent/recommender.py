@@ -988,6 +988,7 @@ class AnimeRecommender:
         )
         liked_set = set(liked_ids)
         blocked_set = liked_set.union(excluded_ids)
+        session_history = self._session_history(liked_ids)
         active_channels = {
             "metadata": bool(profile),
             "synopsis": bool(story_profile),
@@ -1120,7 +1121,14 @@ class AnimeRecommender:
             )
             collaborative_similarity = collaborative_scores.get(anime_id, 0.0)
             quality = self._quality_bonus(item)
-            session_score = self._session_score(item, liked_ids, session_profile, selected_genres, blocked_genres)
+            session_score = self._session_score(
+                item,
+                liked_ids,
+                session_profile,
+                selected_genres,
+                blocked_genres,
+                history=session_history,
+            )
             signals = {
                 "metadata": positive_score(similarity),
                 "synopsis": positive_score(story_similarity),
@@ -2312,27 +2320,14 @@ class AnimeRecommender:
         session_profile: dict[str, Any],
         selected_genres: set[str],
         blocked_genres: set[str],
+        *,
+        history: tuple[Counter[str], Counter[str], Counter[str], Counter[str]] | None = None,
     ) -> float:
         item_genres = {genre.casefold() for genre in item.get("genres", [])}
         if blocked_genres and item_genres.intersection(blocked_genres):
             return 0.0
 
-        liked_genres: Counter[str] = Counter()
-        liked_studios: Counter[str] = Counter()
-        liked_creators: Counter[str] = Counter()
-        liked_types: Counter[str] = Counter()
-
-        for anime_id in liked_ids:
-            liked = self.by_id.get(int(anime_id))
-            if not liked:
-                continue
-            liked_genres.update(genre.casefold() for genre in liked.get("genres", []))
-            liked_studios.update(studio.casefold() for studio in liked.get("studios", []))
-            liked_creators.update(
-                person.get("name", "").casefold() for person in self._selected_creators(liked) if person.get("name")
-            )
-            if liked.get("type"):
-                liked_types.update([(liked["type"] or "").casefold()])
+        liked_genres, liked_studios, liked_creators, liked_types = history or self._session_history(liked_ids)
 
         preferred_genres = {
             str(value).casefold() for value in session_profile.get("preferred_genres", []) or [] if value
@@ -2369,6 +2364,28 @@ class AnimeRecommender:
                 score += 0.10 * max(-1.0, min(1.0, float(rating)))
 
         return positive_score(score)
+
+    def _session_history(
+        self,
+        liked_ids: list[int],
+    ) -> tuple[Counter[str], Counter[str], Counter[str], Counter[str]]:
+        liked_genres: Counter[str] = Counter()
+        liked_studios: Counter[str] = Counter()
+        liked_creators: Counter[str] = Counter()
+        liked_types: Counter[str] = Counter()
+
+        for anime_id in liked_ids:
+            liked = self.by_id.get(int(anime_id))
+            if not liked:
+                continue
+            liked_genres.update(genre.casefold() for genre in liked.get("genres", []))
+            liked_studios.update(studio.casefold() for studio in liked.get("studios", []))
+            liked_creators.update(
+                person.get("name", "").casefold() for person in self._selected_creators(liked) if person.get("name")
+            )
+            if liked.get("type"):
+                liked_types.update([(liked["type"] or "").casefold()])
+        return liked_genres, liked_studios, liked_creators, liked_types
 
     def _diversity_penalty(self, item: dict[str, Any], selected_items: list[dict[str, Any]]) -> float:
         if not selected_items:

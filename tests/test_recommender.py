@@ -570,6 +570,44 @@ class AnimeRecommenderTests(unittest.TestCase):
         self.assertIn("final", scores)
         self.assertGreaterEqual(scores["quality"], 0)
 
+    def test_recommend_builds_session_history_once_without_changing_scores(self) -> None:
+        recommender = AnimeRecommender(CATALOG)
+        liked_ids = [1, 2, 4]
+        profile = {
+            "preferred_genres": ["Mystery"],
+            "temporary_ratings": {"Future Mystery": 0.75},
+        }
+        history = recommender._session_history(liked_ids)
+        for item in CATALOG:
+            original = recommender._session_score(
+                item,
+                liked_ids,
+                profile,
+                {"mystery"},
+                set(),
+            )
+            precomputed = recommender._session_score(
+                item,
+                liked_ids,
+                profile,
+                {"mystery"},
+                set(),
+                history=history,
+            )
+            self.assertEqual(precomputed, original)
+
+        calls = 0
+        original_builder = recommender._session_history
+
+        def tracked_builder(values: list[int]):
+            nonlocal calls
+            calls += 1
+            return original_builder(values)
+
+        recommender._session_history = tracked_builder  # type: ignore[method-assign]
+        recommender.recommend(liked_ids=liked_ids, session_profile=profile, limit=5)
+        self.assertEqual(calls, 1)
+
     def test_recommend_uses_embedding_and_svd_channels_for_liked_title(self) -> None:
         recommender = AnimeRecommender(CATALOG)
         results = recommender.recommend(liked_titles=["Space Quest"], limit=3)
