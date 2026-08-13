@@ -36,6 +36,7 @@ from backend.anime_agent.evaluation.split import (
     build_split_store,
     holdout_sizes,
     select_evaluation_user_ids,
+    split_store_matches,
     split_user_positives,
 )
 from backend.anime_agent.recommender import AnimeRecommender
@@ -161,10 +162,34 @@ def test_persistent_split_preserves_classes_and_reproduces_users(tmp_path: Path)
     metadata = first.metadata()
     assert metadata["dataset_sha256"] == second.metadata()["dataset_sha256"]
     assert metadata["dataset_sha256_scope"] == "full_file"
+    assert len(metadata["catalog_ids_sha256"]) == 64
     assert metadata["ignored_ratings"] == 1
     audit = first.audit_counts()
     assert audit["passed"] is True
     assert audit["stored_users"] == 2
+
+
+def test_split_reuse_rejects_changed_candidate_catalog(tmp_path: Path) -> None:
+    ratings_path = tmp_path / "ratings.csv"
+    split_path = tmp_path / "split.sqlite"
+    rows = [(1, anime_id, 9) for anime_id in range(1, 6)]
+    _write_ratings(ratings_path, rows)
+    config = SplitConfig()
+    build_split_store(ratings_path, split_path, catalog_ids=set(range(1, 7)), config=config)
+    assert split_store_matches(
+        split_path,
+        ratings_path,
+        config,
+        catalog_ids=set(range(1, 7)),
+        source_user_limit=None,
+    )
+    assert not split_store_matches(
+        split_path,
+        ratings_path,
+        config,
+        catalog_ids={1, 2, 3, 4, 5, 99},
+        source_user_limit=None,
+    )
 
 
 def test_ranking_metrics_match_hand_computation_with_multiple_positives() -> None:

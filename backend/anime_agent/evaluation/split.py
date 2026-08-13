@@ -12,13 +12,20 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-SPLIT_SCHEMA_VERSION = 2
+SPLIT_SCHEMA_VERSION = 3
 METHODOLOGY_NOTE = (
     "Because interaction timestamps are unavailable, this evaluation measures preference "
     "reconstruction/generalization under a deterministic user-stratified random holdout, "
     "not chronological next-item prediction."
 )
 _PAIR = struct.Struct("<IB")
+
+
+def catalog_ids_sha256(catalog_ids: Iterable[int]) -> str:
+    digest = hashlib.sha256()
+    for anime_id in sorted({int(value) for value in catalog_ids}):
+        digest.update(f"{anime_id}\n".encode())
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -544,12 +551,16 @@ def build_split_store(
             "dataset_sha256": hasher.hexdigest(),
             "dataset_sha256_scope": "full_file" if source_user_limit is None else "header_and_processed_rows",
             "catalog_items": len(catalog_ids),
+            "catalog_ids_sha256": catalog_ids_sha256(catalog_ids),
             "split_config": {
                 "seed": config.seed,
                 "minimum_positives": config.minimum_positives,
                 "feedback": asdict(config.feedback),
                 "holdout_rules": {
-                    "fewer_than_5": "excluded from evaluation; positives remain training-only",
+                    "below_configured_minimum": (
+                        f"fewer than {config.minimum_positives} positives: excluded from evaluation; "
+                        "positives remain training-only"
+                    ),
                     "5_to_9": {"validation": 1, "test": 1},
                     "10_to_19": {"validation": 1, "test": 2},
                     "20_plus": "floor(10%) validation and floor(10%) test, minimum one each",
@@ -589,6 +600,7 @@ def split_store_matches(
     ratings_path: Path,
     config: SplitConfig,
     *,
+    catalog_ids: set[int],
     source_user_limit: int | None,
 ) -> bool:
     """Cheap reuse check; the full source checksum remains in the artifact."""
@@ -600,6 +612,7 @@ def split_store_matches(
         metadata.get("source_size_bytes") == ratings_path.stat().st_size
         and metadata.get("source_mtime_ns") == ratings_path.stat().st_mtime_ns
         and metadata.get("source_user_limit") == source_user_limit
+        and metadata.get("catalog_ids_sha256") == catalog_ids_sha256(catalog_ids)
         and metadata.get("split_config", {}).get("seed") == config.seed
         and metadata.get("split_config", {}).get("minimum_positives") == config.minimum_positives
         and metadata.get("split_config", {}).get("feedback") == asdict(config.feedback)

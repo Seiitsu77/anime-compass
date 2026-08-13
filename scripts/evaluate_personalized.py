@@ -148,10 +148,12 @@ def main() -> None:
     progress = None if args.quiet else lambda message: print(message, flush=True)
 
     catalog = load_catalog(args.catalog)
+    catalog_ids = {int(item["id"]) for item in catalog}
     reusable = not args.force_split and split_store_matches(
         split_path,
         args.ratings,
         split_config,
+        catalog_ids=catalog_ids,
         source_user_limit=args.source_user_limit,
     )
     if reusable:
@@ -163,7 +165,7 @@ def main() -> None:
         build_split_store(
             args.ratings,
             split_path,
-            catalog_ids={int(item["id"]) for item in catalog},
+            catalog_ids=catalog_ids,
             config=split_config,
             source_user_limit=args.source_user_limit,
             progress=progress,

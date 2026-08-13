@@ -401,6 +401,7 @@ class CurrentHybridModel:
             "profile_feedback": "positive training interactions",
             "catalog_aggregate_fields": "rating-derived fields rebuilt or cleared from training data",
             "candidate_catalog": "full catalog minus exact training-known IDs",
+            "semantic_embedding_available": recommender.semantic_index is not None,
             "llm_used": False,
         }
         self.resident_array_bytes = _recommender_array_bytes(recommender)

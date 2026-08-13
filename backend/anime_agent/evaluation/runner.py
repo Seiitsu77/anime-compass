@@ -569,7 +569,23 @@ def _write_summary_csv(path: Path, summaries: Sequence[Mapping[str, Any]]) -> No
             writer.writerow({field: summary[field] for field in fields})
 
 
-def _write_slice_csvs(output_dir: Path, summaries: Sequence[Mapping[str, Any]]) -> None:
+def _dependency_inclusive_build_seconds(result: Mapping[str, Any], model_name: str) -> float:
+    models = _model_by_name(result)
+    statistics_seconds = float(result["build_details"]["training_statistics"]["duration_seconds"])
+    if model_name == "popularity":
+        return statistics_seconds
+    countsketch_seconds = float(models["countsketch_cf"]["engineering"]["build_duration_seconds"])
+    if model_name == "countsketch_cf":
+        return countsketch_seconds
+    return (
+        statistics_seconds
+        + countsketch_seconds
+        + float(models["current_hybrid"]["engineering"]["build_duration_seconds"])
+    )
+
+
+def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
+    summaries = result["models"]
     with (output_dir / "user_segments.csv").open("w", encoding="utf-8", newline="") as file:
         fields = ["model", "segment", "users", "ndcg_at_10", "recall_at_10", "hit_rate_at_10"]
         writer = csv.DictWriter(file, fieldnames=fields)
@@ -605,6 +621,7 @@ def _write_slice_csvs(output_dir: Path, summaries: Sequence[Mapping[str, Any]]) 
         fields = [
             "model",
             "build_duration_seconds",
+            "dependency_inclusive_build_duration_seconds",
             "inference_latency_p50_ms",
             "inference_latency_p95_ms",
             "serialization_latency_p50_ms",
@@ -620,7 +637,11 @@ def _write_slice_csvs(output_dir: Path, summaries: Sequence[Mapping[str, Any]]) 
             writer.writerow(
                 {
                     "model": summary["model"],
-                    **{field: engineering[field] for field in fields[1:7]},
+                    "build_duration_seconds": engineering["build_duration_seconds"],
+                    "dependency_inclusive_build_duration_seconds": _dependency_inclusive_build_seconds(
+                        result, str(summary["model"])
+                    ),
+                    **{field: engineering[field] for field in fields[3:8]},
                     "artifact_size_bytes": engineering["artifact"]["size_bytes"],
                     "artifact_sha256": engineering["artifact"]["sha256"],
                 }
@@ -788,6 +809,8 @@ def run_personalized_evaluation(
             "novelty_bits": "Mean -log2((train positive count + 1)/(all train positives + catalog size)).",
             "popularity_bias": "Mean per-user normalized-log popularity of recommendations minus training-positive history.",
             "intra_list_diversity": "Mean pairwise Jaccard distance over catalog genre sets; empty/empty distance is zero.",
+            "beyond_accuracy_scope": f"Coverage, novelty, popularity bias, exposure, and ILD use top-{config.recommendation_k} rankings.",
+            "serialization": "Timing covers compact ranking-ID JSON serialization, not the production HTTP response payload.",
         },
         "models": summaries,
         "paired_bootstrap": bootstrap,
@@ -813,7 +836,7 @@ def run_personalized_evaluation(
     results_path = output_dir / "results.json"
     results_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     _write_summary_csv(output_dir / "summary.csv", summaries)
-    _write_slice_csvs(output_dir, summaries)
+    _write_slice_csvs(output_dir, result)
     _write_bootstrap_csv(output_dir / "paired_bootstrap.csv", bootstrap)
     (output_dir / "report.md").write_text(render_markdown_report(result), encoding="utf-8")
     manifest = {
@@ -865,7 +888,7 @@ def refresh_derived_outputs(output_dir: Path) -> None:
     result = json.loads((output_dir / "results.json").read_text(encoding="utf-8"))
     summaries = result["models"]
     _write_summary_csv(output_dir / "summary.csv", summaries)
-    _write_slice_csvs(output_dir, summaries)
+    _write_slice_csvs(output_dir, result)
     _write_bootstrap_csv(output_dir / "paired_bootstrap.csv", result["paired_bootstrap"])
     (output_dir / "report.md").write_text(render_markdown_report(result), encoding="utf-8")
     manifest_path = output_dir / "manifest.json"
@@ -978,16 +1001,18 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             "## Engineering metrics",
             "",
             "Recommendation latency excludes HTTP, frontend rendering, LLM generation, and external APIs. Memory is the "
-            "resident NumPy array footprint attributable to each loaded model; the run manifest separately records process peak RSS.",
+            "resident NumPy array footprint attributable to each loaded model; the run manifest separately records process peak RSS. "
+            "Incremental build is the model's own stage; end-to-end includes required shared train-statistics/CountSketch stages.",
             "",
-            "| Model | Build/train time | p50 inference | p95 inference | Array memory | Artifact size |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| Model | Incremental build | End-to-end build | p50 inference | p95 inference | Array memory | Artifact size |",
+            "|---|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for name in model_order:
         engineering = models[name]["engineering"]
         lines.append(
             f"| {labels[name]} | {engineering['build_duration_seconds']:.2f}s | "
+            f"{_dependency_inclusive_build_seconds(result, name):.2f}s | "
             f"{engineering['inference_latency_p50_ms']:.2f}ms | {engineering['inference_latency_p95_ms']:.2f}ms | "
             f"{engineering['resident_array_bytes'] / 1024 / 1024:.2f} MiB | "
             f"{engineering['artifact']['size_bytes'] / 1024 / 1024:.2f} MiB |"
