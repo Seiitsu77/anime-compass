@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sampling-strategy",
         choices=("stratified", "uniform"),
-        default="stratified",
+        default="uniform",
         help="Sample across activity segments or uniformly over eligible users.",
     )
     parser.add_argument("--positive-threshold", type=int, default=8)

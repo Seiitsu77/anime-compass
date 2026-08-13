@@ -50,7 +50,7 @@ from .split import METHODOLOGY_NOTE, SplitStore, UserSplit, select_evaluation_us
 @dataclass(frozen=True)
 class EvaluationRunConfig:
     sample_seed: int = 42
-    sampling_strategy: str = "stratified"
+    sampling_strategy: str = "uniform"
     max_evaluation_users: int | None = 100
     recommendation_k: int = 20
     bootstrap_iterations: int = 2_000
@@ -83,11 +83,11 @@ def _percentile(values: Sequence[float], percentile: float) -> float:
     return float(np.percentile(np.asarray(values, dtype=np.float64), percentile)) if values else 0.0
 
 
-def _measure_build[T](
-    function: Callable[[], T],
+def _measure_build(
+    function: Callable[[], Any],
     *,
     trace_allocations: bool = False,
-) -> tuple[T, float, int | None]:
+) -> tuple[Any, float, int | None]:
     gc.collect()
     if trace_allocations:
         tracemalloc.start()
@@ -124,8 +124,17 @@ def _peak_process_rss_bytes() -> int | None:
 
             counters = ProcessMemoryCounters()
             counters.cb = ctypes.sizeof(counters)
-            success = ctypes.windll.psapi.GetProcessMemoryInfo(
-                ctypes.windll.kernel32.GetCurrentProcess(),
+            get_current_process = ctypes.windll.kernel32.GetCurrentProcess
+            get_current_process.restype = wintypes.HANDLE
+            get_process_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
+            get_process_memory_info.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(ProcessMemoryCounters),
+                wintypes.DWORD,
+            ]
+            get_process_memory_info.restype = wintypes.BOOL
+            success = get_process_memory_info(
+                get_current_process(),
                 ctypes.byref(counters),
                 counters.cb,
             )
@@ -163,8 +172,17 @@ def _current_process_rss_bytes() -> int | None:
 
             counters = ProcessMemoryCounters()
             counters.cb = ctypes.sizeof(counters)
-            success = ctypes.windll.psapi.GetProcessMemoryInfo(
-                ctypes.windll.kernel32.GetCurrentProcess(),
+            get_current_process = ctypes.windll.kernel32.GetCurrentProcess
+            get_current_process.restype = wintypes.HANDLE
+            get_process_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
+            get_process_memory_info.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(ProcessMemoryCounters),
+                wintypes.DWORD,
+            ]
+            get_process_memory_info.restype = wintypes.BOOL
+            success = get_process_memory_info(
+                get_current_process(),
                 ctypes.byref(counters),
                 counters.cb,
             )
@@ -699,6 +717,7 @@ def run_personalized_evaluation(
     output_dir.mkdir(parents=True, exist_ok=True)
     split_metadata = store.metadata()
     split_audit = store.audit_counts()
+    eligible_segment_counts = store.eligible_segment_counts()
     evaluation_user_ids = select_evaluation_user_ids(
         store,
         limit=config.max_evaluation_users,
@@ -767,6 +786,10 @@ def run_personalized_evaluation(
         "run_config": asdict(config),
         "dataset": {
             "source_file": split_metadata.get("source_file"),
+            "source_user_limit": split_metadata.get("source_user_limit"),
+            "source_rows_scanned": split_metadata.get("rows_scanned"),
+            "source_orphan_rows": split_metadata.get("orphan_rows"),
+            "split_build_duration_seconds": split_metadata.get("build_duration_seconds"),
             "dataset_sha256": split_metadata.get("dataset_sha256"),
             "dataset_sha256_scope": split_metadata.get("dataset_sha256_scope", "full_file"),
             "catalog_sha256": sha256_file(catalog_path),
@@ -793,6 +816,12 @@ def run_personalized_evaluation(
                 else f"deterministic {config.sampling_strategy} hash sample of eligible users"
             ),
             "segment_counts": dict(sorted(sample_segment_counts.items())),
+            "eligible_population_segment_counts": eligible_segment_counts,
+            "aggregate_weighting": (
+                "unweighted macro-average over all eligible users"
+                if config.max_evaluation_users in (None, 0)
+                else "unweighted macro-average over sampled users; no population reweighting"
+            ),
             "user_ids_sha256": hashlib_sha256_ids(evaluation_user_ids),
         },
         "item_popularity_bucket_definition": {
@@ -1002,6 +1031,7 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             "",
             "Recommendation latency excludes HTTP, frontend rendering, LLM generation, and external APIs. Memory is the "
             "resident NumPy array footprint attributable to each loaded model; the run manifest separately records process peak RSS. "
+            "The hybrid uses its ranking-only interface, so deterministic explanation/result-payload construction is also excluded. "
             "Incremental build is the model's own stage; end-to-end includes required shared train-statistics/CountSketch stages.",
             "",
             "| Model | Incremental build | End-to-end build | p50 inference | p95 inference | Array memory | Artifact size |",
@@ -1017,6 +1047,14 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             f"{engineering['resident_array_bytes'] / 1024 / 1024:.2f} MiB | "
             f"{engineering['artifact']['size_bytes'] / 1024 / 1024:.2f} MiB |"
         )
+
+    process_peak = result["environment"].get("peak_process_rss_bytes")
+    lines.append("")
+    lines.append(
+        f"Whole-run process peak RSS: **{int(process_peak) / 1024 / 1024:.2f} MiB**."
+        if process_peak is not None
+        else "Whole-run process peak RSS was unavailable on this platform; per-model NumPy footprints remain reported."
+    )
 
     hybrid_stages = models["current_hybrid"]["engineering"]["stage_latency_ms"]
     if hybrid_stages:
@@ -1057,6 +1095,19 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             "before using small differences to select a model.**"
         )
         lines.append("")
+    if result["dataset"].get("source_user_limit") is not None:
+        lines.append(
+            "**Pipeline smoke only:** model artifacts were trained on a source-user prefix, so ranking values must "
+            "not be compared with full-data experiments."
+        )
+        lines.append("")
+    if result["run_config"].get("sampling_strategy") == "stratified":
+        lines.append(
+            "**This activity-balanced sample intentionally gives each user segment equal quota. Aggregate metrics "
+            "are unweighted and therefore are not estimates of whole-population performance; use the uniform sample "
+            "for the primary aggregate comparison.**"
+        )
+        lines.append("")
     for left, right, question in (
         ("countsketch_cf", "popularity", "CountSketch versus popularity"),
         ("current_hybrid", "countsketch_cf", "Hybrid versus CountSketch"),
@@ -1071,6 +1122,14 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
     fastest = min(model_order, key=lambda name: models[name]["engineering"]["inference_latency_p50_ms"])
     hybrid_latency = float(models["current_hybrid"]["engineering"]["inference_latency_p50_ms"])
     lines.append(f"- **Latency:** {labels[fastest]} is fastest. Hybrid p50 is {hybrid_latency:.1f} ms.")
+    eligible_users = int(result["dataset"].get("users_after_filter") or 0)
+    if sample_warning and eligible_users:
+        projected_hours = eligible_users * hybrid_latency / 1000 / 60 / 60
+        lines.append(
+            f"- **Full-run bottleneck:** a simple serial extrapolation from sampled hybrid p50 is about "
+            f"{projected_hours:.1f} hours for {eligible_users:,} eligible users. This is a planning estimate, "
+            "not a measured full-run duration."
+        )
     for segment in ("sparse", "medium", "heavy"):
         if int(models["popularity"]["user_segments"][segment]["users"]):
             best = max(model_order, key=lambda name: models[name]["user_segments"][segment]["ndcg_at_10"])
@@ -1083,8 +1142,9 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
         "novel simply because the train-only artifact has little evidence for many items."
     )
     lines.append(
-        "- **Next model:** LightFM should remain a challenger experiment only after this benchmark is run at full scale; "
-        "promotion still requires a held-out gain with acceptable coverage, bias, and latency."
+        "- **Next model:** the credible CountSketch-over-popularity lift justifies LightFM as the next offline challenger, "
+        "not a production replacement. Promotion still requires a larger held-out gain with acceptable coverage, bias, "
+        "and latency."
     )
 
     lines.extend(

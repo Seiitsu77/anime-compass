@@ -332,6 +332,7 @@ def test_stratified_user_sample_represents_all_activity_segments(tmp_path: Path)
     positive_counts = {1: 5, 2: 6, 3: 10, 4: 12, 5: 25, 6: 30}
     rows = [(user_id, anime_id, 9) for user_id, count in positive_counts.items() for anime_id in range(1, count + 1)]
     store = _build_store(tmp_path, rows, catalog_size=35, name="stratified.sqlite")
+    assert store.eligible_segment_counts() == {"sparse": 2, "medium": 2, "heavy": 2}
     selected = select_evaluation_user_ids(store, limit=3, seed=42, strategy="stratified")
     segments = {user_activity_segment(len(user.train_positive)) for user in store.iter_users_by_ids(selected)}
     assert segments == {"sparse", "medium", "heavy"}

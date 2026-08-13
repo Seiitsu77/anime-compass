@@ -243,6 +243,20 @@ class SplitStore:
             ).fetchall()
         return [(int(row[0]), int(row[1])) for row in rows]
 
+    def eligible_segment_counts(self) -> dict[str, int]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN train_positive_count BETWEEN 1 AND 4 THEN 1 ELSE 0 END) AS sparse,
+                    SUM(CASE WHEN train_positive_count BETWEEN 5 AND 19 THEN 1 ELSE 0 END) AS medium,
+                    SUM(CASE WHEN train_positive_count >= 20 THEN 1 ELSE 0 END) AS heavy
+                FROM user_splits
+                WHERE eligible = 1
+                """
+            ).fetchone()
+        return {segment: int(row[segment] or 0) for segment in ("sparse", "medium", "heavy")}
+
     def audit_counts(self) -> dict[str, int | bool]:
         """Reconcile persisted row counts with artifact metadata using SQL."""
         metadata = self.metadata()
@@ -642,7 +656,7 @@ def select_evaluation_user_ids(
     *,
     limit: int | None,
     seed: int,
-    strategy: str = "stratified",
+    strategy: str = "uniform",
 ) -> list[int]:
     """Select identical users for every model while retaining IDs only."""
     if strategy not in {"uniform", "stratified"}:

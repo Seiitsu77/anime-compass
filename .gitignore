@@ -35,7 +35,7 @@ data/processed/*.npz
 
 # Personalized benchmark splits and train-only model artifacts are reproducible
 # but too large for source control. Reports under results/ stay reviewable.
-data/evaluation/personalized/splits/*.sqlite
+data/evaluation/personalized/splits/
 data/evaluation/personalized/artifacts/
 
 # Local OS/editor files.
