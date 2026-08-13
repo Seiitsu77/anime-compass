@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Anime Compass</title>
+    <link rel="stylesheet" href="/styles.css?v=2026-07-22-1" />
+  </head>
+  <body>
+    <div id="pageBackdrop" class="page-backdrop" aria-hidden="true"></div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <p class="eyebrow">Local-first agent + explainable hybrid content recommender</p>
+          <h1 class="hero-title" aria-label="Anime Compass">
+            <span class="title-word title-word-anime" aria-hidden="true">Anime</span>
+            <span class="title-word title-word-compass" aria-hidden="true">Compass</span>
+          </h1>
+          <span class="title-scanline" aria-hidden="true"></span>
+        </div>
+        <div class="status-row">
+          <span id="catalogStatus" class="status-pill">Loading catalog</span>
+          <span class="status-pill muted">English only</span>
+          <span id="agentStatus" class="status-pill muted">Checking Ollama</span>
+        </div>
+      </header>
+
+      <section class="top-search" aria-label="Search">
+        <label class="search-label function-title" for="searchInput">
+          <span class="character-icon search-icon" aria-hidden="true"></span>
+          <span>Search anime, characters, staff, or voice actors</span>
+        </label>
+        <div class="search-shell">
+          <input id="searchInput" type="search" placeholder="Try Frieren, Hunter x Hunter, Sugita, romance..." autocomplete="off" />
+          <button id="topRecommendBtn" class="primary-button" type="button">Search</button>
+        </div>
+        <div id="searchResults" class="search-results"></div>
+      </section>
+
+      <section class="filter-shell" aria-label="Filters and categories">
+        <button id="filterToggle" class="filter-toggle" type="button" aria-expanded="false">
+          <span class="function-title">
+            <span class="character-icon filter-icon" aria-hidden="true"></span>
+            <span>Filters and Categories</span>
+          </span>
+          <span id="filterSummary">0 categories / Any format</span>
+        </button>
+
+        <div id="filterPanel" class="top-filters" aria-hidden="true">
+        <div class="filters-header">
+          <div>
+            <p class="eyebrow">Filter</p>
+            <h2>Categories and Preferences</h2>
+          </div>
+          <div class="panel-actions">
+            <button id="clearGenresBtn" class="text-button" type="button">Clear categories</button>
+            <button id="closeFiltersBtn" class="close-pill" type="button" aria-label="Hide filters">x</button>
+          </div>
+        </div>
+
+        <div class="filter-grid">
+          <label>
+            <span class="field-label">Format</span>
+            <select id="typeSelect">
+              <option value="">Any format</option>
+            </select>
+          </label>
+          <label>
+            <span class="field-label">Studio (exact filter)</span>
+            <input id="studioInput" type="search" maxlength="100" placeholder="e.g. Madhouse" />
+          </label>
+          <label>
+            <span class="field-label">Min score</span>
+            <input id="minScoreInput" type="number" min="0" max="10" step="0.1" placeholder="Any" />
+          </label>
+          <label>
+            <span class="field-label">Max episodes</span>
+            <input id="maxEpisodesInput" type="number" min="1" step="1" placeholder="Any" />
+          </label>
+          <label>
+            <span class="field-label">From year</span>
+            <input id="minYearInput" type="number" min="1900" max="2100" step="1" placeholder="Any" />
+          </label>
+          <label>
+            <span class="field-label">Through year</span>
+            <input id="maxYearInput" type="number" min="1900" max="2100" step="1" placeholder="Any" />
+          </label>
+          <label>
+            <span class="field-label">Order</span>
+            <select id="sortSelect">
+              <option value="relevance">Best match</option>
+              <option value="score">Highest rated</option>
+              <option value="popularity">Most popular</option>
+              <option value="start_year">Newest</option>
+              <option value="title">Title A-Z</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="category-panel">
+          <div class="category-panel-title">
+            <span class="function-title">
+              <span class="character-icon category-icon" aria-hidden="true"></span>
+              <span>Categories</span>
+            </span>
+            <span id="categoryCount" class="count-pill">0 selected</span>
+          </div>
+          <p class="filter-hint">Click once to include a category, twice to exclude it, and three times to clear it.</p>
+          <div id="genreChips" class="genre-list"></div>
+        </div>
+        </div>
+      </section>
+
+      <main class="main-stage">
+        <section class="control-panel" aria-label="Taste profile">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Taste profile</p>
+              <h2 class="function-title">
+                <span class="character-icon taste-icon" aria-hidden="true"></span>
+                <span>Liked Titles</span>
+                <span id="likedCount" class="count-pill">0</span>
+              </h2>
+            </div>
+            <div class="panel-actions">
+              <button id="resetSessionBtn" class="text-button" type="button">Reset session</button>
+              <button id="clearTasteBtn" class="text-button" type="button">Clear likes</button>
+            </div>
+          </div>
+          <div id="likedList" class="liked-list empty-state">Add titles from search or recommendations.</div>
+        </section>
+
+        <section class="results-area" aria-label="Recommendations">
+          <div class="results-header">
+            <div>
+              <p class="eyebrow">Recommendations</p>
+              <h2 class="function-title">
+                <span class="character-icon recommend-icon" aria-hidden="true"></span>
+                <span id="resultsTitle">Start with highly rated picks</span>
+              </h2>
+            </div>
+            <div id="activeFilters" class="active-filters"></div>
+          </div>
+          <div id="recommendationGrid" class="recommendation-grid" aria-live="polite"></div>
+          <div class="load-more-row">
+            <button id="loadMoreBtn" class="secondary-button" type="button" hidden>Load more</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <section id="agentDock" class="agent-dock is-hidden" aria-label="Agent chat" aria-hidden="true">
+      <div id="chatLog" class="chat-log" aria-live="polite"></div>
+      <div id="agentStarters" class="agent-starters" aria-label="Suggested questions">
+        <button type="button" data-agent-prompt="Introduce Frieren: Beyond Journey's End without spoilers.">Introduce an anime</button>
+        <button type="button" data-agent-prompt="Recommend 5 short mystery anime with no sequels.">Find a focused list</button>
+        <button type="button" data-agent-prompt="Who are the main characters and voice actors in Cowboy Bebop?">Explore cast</button>
+      </div>
+      <form id="agentForm" class="agent-form">
+        <div class="agent-input-shell">
+          <span class="agent-badge">
+            <span class="character-icon agent-icon" aria-hidden="true"></span>
+            <span>Agent / EN</span>
+          </span>
+          <textarea id="agentInput" rows="1" aria-label="Ask Anime Compass" placeholder="Ask in English, e.g. I want a dark action anime with strong characters"></textarea>
+          <button class="primary-button" type="submit">Send</button>
+          <button id="closeAgentBtn" class="close-pill" type="button" aria-label="Hide agent bar">x</button>
+        </div>
+      </form>
+      <details class="trace-panel">
+        <summary>Agent tool trace</summary>
+        <pre id="traceOutput">No tool calls yet.</pre>
+      </details>
+    </section>
+
+    <button id="agentToggle" class="agent-toggle" type="button" aria-label="Ask Compass">
+      <span class="toggle-orbit" aria-hidden="true"></span>
+      <span>Ask Compass</span>
+    </button>
+
+    <div id="detailModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-modal></div>
+      <article class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+        <button class="modal-close" type="button" data-close-modal aria-label="Close details">x</button>
+        <div id="detailContent"></div>
+      </article>
+    </div>
+
+    <script src="/app.js?v=2026-07-22-5"></script>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+.test-tmp*/
+.env
+server.log
+server.err.log
+app-server.out.log
+app-server.err.log
+data/*.db
+
+# Keep raw Kaggle data out of Git; the processed catalog is enough for deployment.
+Anime Data/**/*.csv
+data/raw/*.csv
+/anime.csv
+/anime_with_synopsis.csv
+/animelist.csv
+/rating_complete.csv
+/watching_status.csv
+/html folder/
+archive/*.csv
+archive/html/
+archive/html folder/
+
+# Generated artifacts stay local or live in the companion Hugging Face Dataset
+# repository. Keep only their checksummed manifest in GitHub source control.
+data/processed/*.json
+data/processed/*.npz
+
+# Local OS/editor files.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

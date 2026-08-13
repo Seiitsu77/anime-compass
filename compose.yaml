@@ -1,0 +1,25 @@
+services:
+  anime-compass:
+    build: .
+    ports:
+      - "8000:7860"
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 7860
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      DATABASE_URL: sqlite:///data/runtime/anime_compass.db
+      HF_DATASET_REPO: ${HF_DATASET_REPO:-}
+      HF_DATASET_REVISION: ${HF_DATASET_REVISION:-main}
+      EMBEDDING_PROVIDER: sentence_transformers
+      EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+      EMBEDDING_MODEL_REVISION: 1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+      EMBEDDING_DIMENSIONS: 384
+      EMBEDDING_DEVICE: cpu
+      EMBEDDING_LOCAL_FILES_ONLY: "true"
+    volumes:
+      - anime-compass-runtime:/home/user/app/data/runtime
+    restart: unless-stopped
+
+volumes:
+  anime-compass-runtime:

@@ -1,0 +1,47 @@
+[
+  {
+    "name": "psychological mystery from Death Note",
+    "reference_titles": ["Death Note"],
+    "expected_genres": ["Mystery", "Suspense", "Psychological"],
+    "expected_related_titles": ["Monster", "Code Geass: Hangyaku no Lelouch"]
+  },
+  {
+    "name": "game-world action from Sword Art Online",
+    "reference_titles": ["Sword Art Online"],
+    "expected_genres": ["Action", "Adventure", "Fantasy", "Video Game"],
+    "expected_related_titles": ["Log Horizon", "Overlord"]
+  },
+  {
+    "name": "creative romance from Sono Bisque Doll",
+    "reference_titles": ["Sono Bisque Doll wa Koi wo Suru"],
+    "expected_genres": ["Romance", "School", "Slice of Life"],
+    "expected_related_titles": ["Wotaku ni Koi wa Muzukashii", "Horimiya"]
+  },
+  {
+    "name": "short mystery series",
+    "include_genres": ["Mystery"],
+    "formats": ["TV"],
+    "max_episodes": 12,
+    "expected_genres": ["Mystery"]
+  },
+  {
+    "name": "weather and separation from Tenki no Ko",
+    "reference_titles": ["Tenki no Ko"],
+    "free_text_preferences": "young people, changing weather, separation, reunion, and a supernatural bond",
+    "expected_genres": ["Romance", "Supernatural"],
+    "expected_related_titles": ["Kimi no Na wa.", "Kumo no Mukou, Yakusoku no Basho"]
+  },
+  {
+    "name": "modern romance television",
+    "include_genres": ["Romance"],
+    "formats": ["TV"],
+    "min_year": 2020,
+    "expected_genres": ["Romance"],
+    "expected_related_titles": ["Horimiya", "Kaguya-sama wa Kokurasetai?"]
+  },
+  {
+    "name": "verified Matsuoka voice-actor relationship",
+    "required_voice_actors": ["Matsuoka, Yoshitsugu"],
+    "expected_genres": []
+  }
+]

@@ -1,0 +1,98 @@
+{
+  "generated_at": "2026-07-29T09:25:27.543406+00:00",
+  "catalog_count": 18064,
+  "benchmark_count": 7,
+  "top_k": 10,
+  "semantic_model": {
+    "available": false,
+    "reason": "RuntimeError"
+  },
+  "collaborative_model": {
+    "available": true,
+    "method": "user-centred CountSketch item similarity",
+    "items": 18064,
+    "dimensions": 384,
+    "ratings": 56726861,
+    "users": 310059,
+    "artifact_version": 1
+  },
+  "results": [
+    {
+      "variant": "popularity",
+      "hard_filter_satisfaction": 1.0,
+      "entity_constraint_satisfaction": 1.0,
+      "hit_rate_at_k": 0.2,
+      "genre_recovery": 0.8472222222222222,
+      "catalog_coverage": 0.002103631532329495,
+      "intra_list_diversity": 0.7540175961604533,
+      "latency_p50_ms": 145.0386999931652,
+      "latency_p95_ms": 508.42179999744985,
+      "unique_recommended_titles": 38
+    },
+    {
+      "variant": "metadata_tfidf",
+      "hard_filter_satisfaction": 1.0,
+      "entity_constraint_satisfaction": 1.0,
+      "hit_rate_at_k": 0.2,
+      "genre_recovery": 0.7638888888888888,
+      "catalog_coverage": 0.00387511071744907,
+      "intra_list_diversity": 0.5654207608969514,
+      "latency_p50_ms": 3009.2989999975543,
+      "latency_p95_ms": 3414.048000006005,
+      "unique_recommended_titles": 70
+    },
+    {
+      "variant": "synopsis_tfidf",
+      "hard_filter_satisfaction": 1.0,
+      "entity_constraint_satisfaction": 1.0,
+      "hit_rate_at_k": 0.2,
+      "genre_recovery": 0.8055555555555556,
+      "catalog_coverage": 0.003819751992914083,
+      "intra_list_diversity": 0.8311478116240021,
+      "latency_p50_ms": 3053.9668000128586,
+      "latency_p95_ms": 3356.076199997915,
+      "unique_recommended_titles": 69
+    },
+    {
+      "variant": "lsa",
+      "hard_filter_satisfaction": 1.0,
+      "entity_constraint_satisfaction": 1.0,
+      "hit_rate_at_k": 0.4,
+      "genre_recovery": 0.9027777777777778,
+      "catalog_coverage": 0.003819751992914083,
+      "intra_list_diversity": 0.8354188668474383,
+      "latency_p50_ms": 3020.4274999996414,
+      "latency_p95_ms": 3444.97529999353,
+      "unique_recommended_titles": 69
+    },
+    {
+      "variant": "collaborative",
+      "hard_filter_satisfaction": 1.0,
+      "entity_constraint_satisfaction": 1.0,
+      "hit_rate_at_k": 0.6,
+      "genre_recovery": 0.7361111111111112,
+      "catalog_coverage": 0.003598317094774136,
+      "intra_list_diversity": 0.7894963766392338,
+      "latency_p50_ms": 3072.295399993891,
+      "latency_p95_ms": 3462.681999997585,
+      "unique_recommended_titles": 65
+    },
+    {
+      "variant": "final_hybrid",
+      "hard_filter_satisfaction": 1.0,
+      "entity_constraint_satisfaction": 1.0,
+      "hit_rate_at_k": 1.0,
+      "genre_recovery": 0.9027777777777778,
+      "catalog_coverage": 0.00370903454384411,
+      "intra_list_diversity": 0.7368561332847047,
+      "latency_p50_ms": 3149.7480000107316,
+      "latency_p95_ms": 3462.0154999865917,
+      "unique_recommended_titles": 67
+    }
+  ],
+  "limitations": [
+    "Offline proxy metrics do not represent real user satisfaction.",
+    "The benchmark is small and manually labeled.",
+    "Latency excludes model startup, HTTP, and LLM generation."
+  ]
+}

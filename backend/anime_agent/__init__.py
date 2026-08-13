@@ -1,0 +1,1 @@
+"""Anime Compass backend package."""

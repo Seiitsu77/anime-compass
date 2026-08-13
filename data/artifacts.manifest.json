@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "source_dataset": {
+    "name": "Anime Recommendation Database 2020",
+    "license": "CC0-1.0",
+    "attribution_file": "DATASET_ATTRIBUTION.md"
+  },
+  "artifacts": {
+    "anime_catalog.json": {
+      "path": "data/processed/anime_catalog.json",
+      "sha256": "2ef54a712f63eec2adc33f21bd431fc66ab097ba135ab440fd3d773f84668c75",
+      "size_bytes": 119371537,
+      "required": true
+    },
+    "collaborative_embeddings.npz": {
+      "path": "data/processed/collaborative_embeddings.npz",
+      "sha256": "4868cc4344096c834c0414d377773a975bb4e54e825b985da20299c1fafa4a3e",
+      "size_bytes": 15044769,
+      "required": true
+    }
+  }
+}

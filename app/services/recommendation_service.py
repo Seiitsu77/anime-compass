@@ -1,0 +1,149 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from collections import OrderedDict
+from typing import Any
+
+from app.api.schemas import RecommendRequest
+from app.core.errors import AppError
+from app.repositories.session_repository import SQLiteSessionRepository, merge_profiles
+from backend.anime_agent.recommender import AnimeRecommender
+
+logger = logging.getLogger("anime_compass.recommendation")
+
+
+class RecommendationService:
+    def __init__(self, recommender: AnimeRecommender, sessions: SQLiteSessionRepository):
+        self.recommender = recommender
+        self.sessions = sessions
+        self._cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+        self._cache_ttl_seconds = 45.0
+        self._cache_size = 128
+
+    async def recommend(self, request: RecommendRequest) -> dict[str, Any]:
+        self._validate_catalog_values(request)
+        started = time.perf_counter()
+        session_profile = await asyncio.to_thread(self.sessions.get, request.session_id)
+        session_profile = merge_profiles(session_profile, request.session_profile)
+        cache_key = self._cache_key(request, session_profile)
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return {**cached, "cache_hit": True}
+
+        payload = request.model_dump(exclude={"session_id", "session_profile", "limit"})
+        payload["session_profile"] = session_profile
+        payload["limit"] = request.top_k
+        diagnostics: dict[str, Any] = {}
+        payload["diagnostics"] = diagnostics
+        results = await asyncio.to_thread(self.recommender.recommend, **payload)
+        resolved_titles = await asyncio.to_thread(
+            self.recommender.resolve_title_details,
+            [*request.reference_titles, *request.liked_titles],
+        )
+        public_query = request.model_dump(
+            exclude={"liked_ids", "excluded_ids", "weights", "session_profile", "limit"},
+        )
+        response: dict[str, Any] = {
+            "query": public_query,
+            "resolved_titles": resolved_titles,
+            "recommendations": results,
+            "results": results,
+            "model_info": self.recommender.model_info(),
+            "diagnostics": diagnostics,
+            "timing_ms": round((time.perf_counter() - started) * 1000, 2),
+            "cache_hit": False,
+        }
+        if not results:
+            response["message"] = "No catalog titles matched all hard constraints."
+
+        await asyncio.to_thread(
+            self.sessions.log_event,
+            request.session_id,
+            "recommendation",
+            "recommend",
+            {
+                "result_ids": [item["id"] for item in results],
+                "required_voice_actors": request.required_voice_actors,
+                "required_studios": request.required_studios,
+                "required_staff": request.required_staff,
+                "required_characters": request.required_characters,
+            },
+        )
+        if cache_key:
+            self._put_cached(cache_key, response)
+        logger.info(
+            "recommendation_completed",
+            extra={
+                "context": {
+                    "recommendation_mode": results[0].get("recommendation_mode") if results else "empty",
+                    "candidate_count_before_filter": diagnostics.get("candidate_count_before_filter", 0),
+                    "candidate_count_after_filter": diagnostics.get("candidate_count_after_entity_filter", 0),
+                    "result_count": len(results),
+                    "cache_hit": False,
+                    "duration_ms": response["timing_ms"],
+                }
+            },
+        )
+        return response
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int,
+        genres: list[str] | None = None,
+        media_type: str | None = None,
+        min_score: float | None = None,
+        max_episodes: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self.recommender.search,
+            query,
+            limit,
+            genres,
+            media_type,
+            min_score,
+            max_episodes,
+        )
+
+    async def search_page(self, **query: Any) -> tuple[list[dict[str, Any]], int]:
+        return await asyncio.to_thread(self.recommender.search_page, **query)
+
+    def _validate_catalog_values(self, request: RecommendRequest) -> None:
+        metadata = self.recommender.meta()
+        known_formats = {value.casefold() for value in metadata["types"]}
+        unknown_formats = [value for value in request.formats if value.casefold() not in known_formats]
+        if unknown_formats:
+            raise AppError(
+                "Unknown anime format: " + ", ".join(unknown_formats),
+                code="invalid_format",
+                status_code=422,
+            )
+
+    @staticmethod
+    def _cache_key(request: RecommendRequest, session_profile: dict[str, Any]) -> str:
+        if request.session_id or any(session_profile.get(key) for key in session_profile):
+            return ""
+        return json.dumps(request.model_dump(exclude={"session_id", "session_profile"}), sort_keys=True)
+
+    def _get_cached(self, key: str) -> dict[str, Any] | None:
+        if not key:
+            return None
+        cached = self._cache.get(key)
+        if cached is None:
+            return None
+        created_at, value = cached
+        if time.monotonic() - created_at > self._cache_ttl_seconds:
+            self._cache.pop(key, None)
+            return None
+        self._cache.move_to_end(key)
+        return value
+
+    def _put_cached(self, key: str, value: dict[str, Any]) -> None:
+        self._cache[key] = (time.monotonic(), value)
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._cache_size:
+            self._cache.popitem(last=False)

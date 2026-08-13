@@ -1,0 +1,34 @@
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "backend/anime_agent"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+omit = ["*/__init__.py"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Keep datetime.timezone.utc for the documented Python 3.10 compatibility.
+ignore = ["E501", "UP017"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+ignore_missing_imports = true
+follow_imports = "skip"
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+exclude = ["backend/anime_agent/server.py"]

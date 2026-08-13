@@ -1,0 +1,94 @@
+{
+  "dataset": {
+    "name": "Anime Recommendation Database 2020",
+    "source": "https://www.kaggle.com/datasets/hernan4444/anime-recommendation-database-2020",
+    "license": "CC0-1.0",
+    "archive_path": "archive"
+  },
+  "grain": {
+    "anime.csv": "one row per MAL anime ID",
+    "rating_complete.csv": "one completed-and-rated anime per anonymous user"
+  },
+  "metadata": {
+    "rows": 17562,
+    "unique_anime_ids": 17562,
+    "duplicate_anime_ids": 0,
+    "invalid_anime_ids": 0,
+    "missing": {
+      "Aired": 309,
+      "Episodes": 516,
+      "Genres": 63,
+      "Score": 5141,
+      "Studios": 7079,
+      "Type": 37
+    },
+    "missing_rates": {
+      "Aired": 0.017595,
+      "Episodes": 0.029382,
+      "Genres": 0.003587,
+      "Score": 0.292734,
+      "Studios": 0.403086,
+      "Type": 0.002107
+    },
+    "media_types": {
+      "TV": 4996,
+      "OVA": 3894,
+      "Movie": 3041,
+      "Special": 2218,
+      "ONA": 1907,
+      "Music": 1469,
+      "Unknown": 37
+    },
+    "year_min": 1917,
+    "year_max": 2022,
+    "missing_studios": 7079,
+    "adult_titles_excluded_by_default": 1348,
+    "mojibake_rows_before_cleaning": 6,
+    "synopsis": {
+      "rows": 16214,
+      "duplicate_anime_ids": 0,
+      "missing_text": 8,
+      "mojibake_rows_before_cleaning": 4,
+      "catalog_join_coverage": 0.923243,
+      "orphan_ids": 0
+    }
+  },
+  "ratings": {
+    "rows_scanned": 57633278,
+    "row_limit": null,
+    "users": 310059,
+    "rated_anime_ids": 16872,
+    "catalog_rating_coverage": 0.960711,
+    "invalid_rows": 0,
+    "invalid_rate": 0.0,
+    "orphan_rows": 0,
+    "orphan_rate": 0.0,
+    "duplicate_user_anime_pairs": 0,
+    "sorted_by_user": true,
+    "rating_min": 1,
+    "rating_max": 10,
+    "rating_mean": 7.510789,
+    "rating_distribution": {
+      "1": 333419,
+      "2": 405556,
+      "3": 696048,
+      "4": 1455102,
+      "5": 3436250,
+      "6": 6849293,
+      "7": 13325549,
+      "8": 14642156,
+      "9": 9773857,
+      "10": 6716048
+    }
+  },
+  "quality_gates": {
+    "metadata_primary_key_unique": true,
+    "metadata_primary_key_valid": true,
+    "synopsis_join_coverage_at_least_90_percent": true,
+    "ratings_valid": true,
+    "ratings_orphan_rate_below_0_1_percent": true,
+    "ratings_unique_user_anime_pairs": true,
+    "ratings_sorted_by_user": true
+  },
+  "passed": true
+}
