@@ -581,7 +581,7 @@ def _write_summary_csv(path: Path, summaries: Sequence[Mapping[str, Any]]) -> No
         "intra_list_diversity",
     ]
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fields)
+        writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for summary in summaries:
             writer.writerow({field: summary[field] for field in fields})
@@ -606,7 +606,7 @@ def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
     summaries = result["models"]
     with (output_dir / "user_segments.csv").open("w", encoding="utf-8", newline="") as file:
         fields = ["model", "segment", "users", "ndcg_at_10", "recall_at_10", "hit_rate_at_10"]
-        writer = csv.DictWriter(file, fieldnames=fields)
+        writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for summary in summaries:
             for segment, values in summary["user_segments"].items():
@@ -622,7 +622,7 @@ def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
             "ndcg_at_10",
             "recommendation_exposure",
         ]
-        writer = csv.DictWriter(file, fieldnames=fields)
+        writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for summary in summaries:
             for bucket, values in summary["heldout_item_popularity"].items():
@@ -648,7 +648,7 @@ def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
             "artifact_size_bytes",
             "artifact_sha256",
         ]
-        writer = csv.DictWriter(file, fieldnames=fields)
+        writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for summary in summaries:
             engineering = summary["engineering"]
@@ -680,7 +680,7 @@ def _write_bootstrap_csv(path: Path, comparisons: Sequence[Mapping[str, Any]]) -
         "ci_excludes_zero",
     ]
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fields)
+        writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for comparison in comparisons:
             writer.writerow({field: comparison[field] for field in fields})
@@ -744,7 +744,7 @@ def run_personalized_evaluation(
     metrics_by_model: dict[str, AlignedPrimaryMetrics] = {}
     per_user_path = output_dir / "per_user_metrics.csv.gz"
     with gzip.open(per_user_path, "wt", encoding="utf-8", newline="") as per_user_file:
-        row_writer = csv.DictWriter(per_user_file, fieldnames=PER_USER_FIELDS)
+        row_writer = csv.DictWriter(per_user_file, fieldnames=PER_USER_FIELDS, lineterminator="\n")
         row_writer.writeheader()
         for model in models:
             if progress is not None:
@@ -863,11 +863,11 @@ def run_personalized_evaluation(
     result["environment"]["peak_process_rss_bytes"] = _peak_process_rss_bytes()
 
     results_path = output_dir / "results.json"
-    results_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+    _write_text_lf(results_path, json.dumps(result, indent=2, sort_keys=True))
     _write_summary_csv(output_dir / "summary.csv", summaries)
     _write_slice_csvs(output_dir, result)
     _write_bootstrap_csv(output_dir / "paired_bootstrap.csv", bootstrap)
-    (output_dir / "report.md").write_text(render_markdown_report(result), encoding="utf-8")
+    _write_text_lf(output_dir / "report.md", render_markdown_report(result))
     manifest = {
         "schema_version": 1,
         "generated_at": result["generated_at"],
@@ -905,7 +905,7 @@ def run_personalized_evaluation(
     ):
         path = output_dir / name
         manifest["outputs"][name] = {"size_bytes": path.stat().st_size, "sha256": sha256_file(path)}
-    (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    _write_text_lf(output_dir / "manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
     if progress is not None:
         progress(f"outputs: wrote benchmark artifacts to {output_dir}")
     return result
@@ -915,11 +915,12 @@ def refresh_derived_outputs(output_dir: Path) -> None:
     """Regenerate report/CSV views from a completed immutable results JSON."""
     output_dir = Path(output_dir)
     result = json.loads((output_dir / "results.json").read_text(encoding="utf-8"))
+    _write_text_lf(output_dir / "results.json", json.dumps(result, indent=2, sort_keys=True))
     summaries = result["models"]
     _write_summary_csv(output_dir / "summary.csv", summaries)
     _write_slice_csvs(output_dir, result)
     _write_bootstrap_csv(output_dir / "paired_bootstrap.csv", result["paired_bootstrap"])
-    (output_dir / "report.md").write_text(render_markdown_report(result), encoding="utf-8")
+    _write_text_lf(output_dir / "report.md", render_markdown_report(result))
     manifest_path = output_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     for path in sorted(output_dir.iterdir()):
@@ -928,7 +929,13 @@ def refresh_derived_outputs(output_dir: Path) -> None:
                 "size_bytes": path.stat().st_size,
                 "sha256": sha256_file(path),
             }
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    _write_text_lf(manifest_path, json.dumps(manifest, indent=2, sort_keys=True))
+
+
+def _write_text_lf(path: Path, content: str) -> None:
+    """Write deterministic UTF-8 text without platform newline translation."""
+    with path.open("w", encoding="utf-8", newline="\n") as file:
+        file.write(content)
 
 
 def hashlib_sha256_ids(values: Sequence[int] | Any) -> str:
