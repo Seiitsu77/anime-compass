@@ -1,0 +1,13 @@
+model,segment,users,ndcg_at_10,recall_at_10,hit_rate_at_10
+popularity,heavy,118,0.1303247301343798,0.03768319689011674,0.6440677966101694
+popularity,medium,1,0.0,0.0,0.0
+popularity,sparse,0,0.0,0.0,0.0
+countsketch_cf,heavy,118,0.15979537447149433,0.06363787344732573,0.7288135593220338
+countsketch_cf,medium,1,0.0,0.0,0.0
+countsketch_cf,sparse,0,0.0,0.0,0.0
+lightfm_id,heavy,118,0.21793819300836179,0.06887622661637666,0.8050847457627118
+lightfm_id,medium,1,0.0,0.0,0.0
+lightfm_id,sparse,0,0.0,0.0,0.0
+lightfm_hybrid,heavy,118,0.20675929147397046,0.07253453972461371,0.7711864406779662
+lightfm_hybrid,medium,1,0.0,0.0,0.0
+lightfm_hybrid,sparse,0,0.0,0.0,0.0

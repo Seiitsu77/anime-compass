@@ -1,0 +1,258 @@
+{
+  "experiment": {
+    "catalog_sha256": "2ef54a712f63eec2adc33f21bd431fc66ab097ba135ab440fd3d773f84668c75",
+    "dataset_sha256": "b60519348a90bd5e02c25355b374f7ca055a0637a237f0e163447953b13ffaa0",
+    "environment": {
+      "logical_cpu_count": 24,
+      "numpy": "2.2.6",
+      "peak_process_rss_bytes": 786104320,
+      "platform": "Windows-10-10.0.26200-SP0",
+      "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+      "python": "3.10.0"
+    },
+    "evaluated_users": 1000,
+    "positive_threshold": 8,
+    "run_config": {
+      "bootstrap_iterations": 2000,
+      "countsketch_projections": 3,
+      "countsketch_width": 128,
+      "force_model_rebuild": false,
+      "max_evaluation_users": 1000,
+      "model_names": [
+        "popularity",
+        "countsketch_cf",
+        "lightfm_id",
+        "lightfm_hybrid"
+      ],
+      "progress_every": 100,
+      "recommendation_k": 20,
+      "sample_seed": 42,
+      "sampling_strategy": "uniform",
+      "users_per_stratum": null
+    },
+    "split_seed": 42,
+    "split_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038"
+  },
+  "generated_at": "2026-08-22T23:46:16.027377+00:00",
+  "models": [
+    {
+      "artifact": {
+        "files": [
+          "popularity_train_only.npz"
+        ],
+        "sha256": "d1ffeecb9eba3fa456dc71fa5e3f6f00cc4cc2dd2d92336cebb88263ecd82a92",
+        "size_bytes": 57523
+      },
+      "hyperparameters": {
+        "signal": "positive training interaction count",
+        "tie_breaker": "anime_id"
+      },
+      "name": "popularity",
+      "offline_peak_process_rss_bytes": null,
+      "offline_training_duration_seconds": 21.519830300007015,
+      "selected_fit_or_build_duration_seconds": 21.519830300007015,
+      "training_or_build_duration_seconds": 21.519830300007015,
+      "version": "train-positive-count-v1"
+    },
+    {
+      "artifact": {
+        "files": [
+          "countsketch_train_only.npz"
+        ],
+        "sha256": "8eed258b731ff0efd7957a67146faa0116003f293872b4e70854c99a35fdaf91",
+        "size_bytes": 14967050
+      },
+      "hyperparameters": {
+        "dimensions": 384,
+        "method": "user-centred CountSketch item similarity",
+        "profile_feedback": "positive training interactions",
+        "training_feedback": "all observed train ratings, classes kept distinct"
+      },
+      "name": "countsketch_cf",
+      "offline_peak_process_rss_bytes": 786104320,
+      "offline_training_duration_seconds": 65.769123,
+      "selected_fit_or_build_duration_seconds": 65.769123,
+      "training_or_build_duration_seconds": 65.769123,
+      "version": "user-centred-countsketch-v1"
+    },
+    {
+      "artifact": {
+        "files": [
+          "lightfm_id.npz"
+        ],
+        "sha256": "f0850327c566d420ad7175ac2e3c6b4d674f01ee3a33704f3629b9f4242fdd02",
+        "size_bytes": 20935227
+      },
+      "hyperparameters": {
+        "candidate_catalog": "full catalog minus all known training ratings",
+        "feature_summary": {
+          "identity_feature_count": 18064,
+          "included_fields": [],
+          "metadata_feature_count": 0,
+          "normalization": "identity matrix",
+          "schema_version": 1
+        },
+        "selected_config": {
+          "epochs": 3,
+          "item_alpha": 1e-06,
+          "learning_rate": 0.05,
+          "loss": "warp",
+          "max_sampled": 10,
+          "no_components": 16,
+          "user_alpha": 1e-06
+        },
+        "selected_validation_metrics": {
+          "catalog_coverage": 0.0275132860938884,
+          "hit_rate_at_10": 0.6466666666666666,
+          "inference_latency_p50_ms": 1.2633000151254237,
+          "inference_latency_p95_ms": 1.893855001253542,
+          "intra_list_diversity": 0.8031125518487361,
+          "mrr": 0.34614632364825865,
+          "ndcg_at_10": 0.19881879918455428,
+          "ndcg_at_20": 0.21803616814152313,
+          "novelty_bits": 9.111658754188362,
+          "popularity_bias": 0.08263534151240735,
+          "recall_at_10": 0.17831347212583887,
+          "recall_at_20": 0.27138049308350737,
+          "validation_target": "validation_positive only; test positives were not read",
+          "validation_users": 300
+        },
+        "selection_data": "validation positives only; test positives were not accessed",
+        "serving_runtime": "NumPy-only exported embeddings and biases",
+        "total_tuning_duration_seconds": 297.612526,
+        "trainer": "LightFM",
+        "training_feedback": "positive training interactions only; explicit negatives remain separate and unused",
+        "variant": "lightfm_id"
+      },
+      "name": "lightfm_id",
+      "offline_peak_process_rss_bytes": 1404833792,
+      "offline_training_duration_seconds": 297.612526,
+      "selected_fit_or_build_duration_seconds": 102.231642,
+      "training_or_build_duration_seconds": 102.231642,
+      "version": "lightfm-export-v1"
+    },
+    {
+      "artifact": {
+        "files": [
+          "lightfm_hybrid.npz"
+        ],
+        "sha256": "da5944dc317fed43a7b2e8df05dd97aea96d8da8557d21d03afee3fcf3f55054",
+        "size_bytes": 20928437
+      },
+      "hyperparameters": {
+        "candidate_catalog": "full catalog minus all known training ratings",
+        "feature_summary": {
+          "eligible_studio_count": 321,
+          "excluded_outcome_fields": [
+            "archive_score",
+            "collaborative_available",
+            "favorites",
+            "members",
+            "popularity",
+            "rank",
+            "rating_count",
+            "score",
+            "score_distribution",
+            "watching_stats"
+          ],
+          "feature_count": 18515,
+          "feature_names_sha256": "1720aaaacc63ba04295b56d6826e2f6a80e6f86f57a6cc269d962264e5781e9b",
+          "field_completeness": {
+            "content_rating": 0.8975863596102746,
+            "genres": 0.9800155004428698,
+            "source": 0.8975863596102746,
+            "start_year": 0.9887068201948627,
+            "studios": 0.6507418069087688,
+            "type": 1.0
+          },
+          "identity_feature_count": 18064,
+          "included_fields": [
+            "genres",
+            "type",
+            "source",
+            "studios",
+            "start_year",
+            "content_rating"
+          ],
+          "metadata_feature_count": 451,
+          "nonzero_assignments": 162706,
+          "normalization": "per-item L1; identity and static metadata are equally weighted tokens",
+          "schema_version": 1,
+          "studio_min_frequency": 5
+        },
+        "selected_config": {
+          "epochs": 3,
+          "item_alpha": 1e-06,
+          "learning_rate": 0.05,
+          "loss": "warp",
+          "max_sampled": 10,
+          "no_components": 16,
+          "user_alpha": 1e-06
+        },
+        "selected_validation_metrics": {
+          "catalog_coverage": 0.02945084145261293,
+          "hit_rate_at_10": 0.6166666666666667,
+          "inference_latency_p50_ms": 1.261299999896437,
+          "inference_latency_p95_ms": 1.8940550216939307,
+          "intra_list_diversity": 0.7804777789218579,
+          "mrr": 0.2928370023652531,
+          "ndcg_at_10": 0.1707713612046352,
+          "ndcg_at_20": 0.19153503870271202,
+          "novelty_bits": 9.26581104247711,
+          "popularity_bias": 0.0735324298295317,
+          "recall_at_10": 0.16110937385941465,
+          "recall_at_20": 0.25288581216545686,
+          "validation_target": "validation_positive only; test positives were not read",
+          "validation_users": 300
+        },
+        "selection_data": "validation positives only; test positives were not accessed",
+        "serving_runtime": "NumPy-only exported embeddings and biases",
+        "total_tuning_duration_seconds": 715.275,
+        "trainer": "LightFM",
+        "training_feedback": "positive training interactions only; explicit negatives remain separate and unused",
+        "variant": "lightfm_hybrid"
+      },
+      "name": "lightfm_hybrid",
+      "offline_peak_process_rss_bytes": 1411039232,
+      "offline_training_duration_seconds": 715.275,
+      "selected_fit_or_build_duration_seconds": 265.001859,
+      "training_or_build_duration_seconds": 265.001859,
+      "version": "lightfm-export-v1"
+    }
+  ],
+  "outputs": {
+    "engineering.csv": {
+      "sha256": "2fa941ed4ffddef079a0d55f125b28c0775764795adb0f4a72e00f96e715bf33",
+      "size_bytes": 1179
+    },
+    "item_popularity.csv": {
+      "sha256": "08d72eadb980d8ec38c776ae5f7100e668c9376f7a5b05c55e0b67561a8f313e",
+      "size_bytes": 696
+    },
+    "paired_bootstrap.csv": {
+      "sha256": "6f9581c3666100237bb163168751399586d312e4ee68ec55aa42cfd1f980c299",
+      "size_bytes": 1236
+    },
+    "per_user_metrics.csv.gz": {
+      "sha256": "ff2f3f519db7c0f3c976f8a5b23a19188230c778355435044401a95889040400",
+      "size_bytes": 110319
+    },
+    "report.md": {
+      "sha256": "b1f4a79bb23ae78881d346ab0aef9c9633bada7dbb4ed6bfd409c55920d95928",
+      "size_bytes": 8618
+    },
+    "results.json": {
+      "sha256": "ef175d78d7896e161f843dd2d921ce9c4eae092bbc00a19a6976eed4618154e2",
+      "size_bytes": 24710
+    },
+    "summary.csv": {
+      "sha256": "460ecc355911a7e5b30ecbd3930da2ee4822c68b3ee0e5b4356dd237c20762d7",
+      "size_bytes": 918
+    },
+    "user_segments.csv": {
+      "sha256": "87792e86b267a6598e64f88dd02abbb65b259e12d08525d429fec97a5edc3c27",
+      "size_bytes": 988
+    }
+  },
+  "schema_version": 1
+}

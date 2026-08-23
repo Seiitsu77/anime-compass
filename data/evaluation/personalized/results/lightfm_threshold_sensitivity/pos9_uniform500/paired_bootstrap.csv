@@ -1,0 +1,3 @@
+left_model,right_model,metric,users,iterations,seed,difference,relative_difference,ci_lower,ci_upper,ci_excludes_zero
+lightfm_id,countsketch_cf,ndcg_at_10,500,1000,42,0.0004362571011907481,0.0024397277625957618,-0.018509980735084267,0.020833988475390256,False
+lightfm_id,countsketch_cf,recall_at_10,500,1000,42,-0.005127222257784618,-0.02418736617880604,-0.030115982077978012,0.020925619483266822,False

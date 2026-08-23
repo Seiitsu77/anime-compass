@@ -27,6 +27,8 @@
   "ignored_ratings": 0,
   "orphan_rows": 906417,
   "orphan_reason": "The 1,348 raw catalog IDs absent from the processed candidate catalog are all adult titles intentionally excluded by the data pipeline.",
+  "train_positive_density": 0.004448728830034865,
+  "train_positive_matrix_sparsity": 0.9955512711699651,
   "train_positive_sparsity": 0.004448728830034865,
   "build_duration_seconds": 181.112676,
   "split_config": {

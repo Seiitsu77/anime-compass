@@ -133,31 +133,32 @@ There are two deliberately separate evaluation layers:
 - The existing seven-case benchmark protects catalog constraints, agent routing, and qualitative recommendation
   behavior.
 - The personalized offline benchmark uses a deterministic, leakage-safe per-user positive holdout over the
-  anonymous rating archive. It compares train-only popularity, the existing CountSketch CF model, and the current
-  complete hybrid on identical users with NDCG/Recall/HR/MRR, coverage/novelty/bias/diversity, activity and
-  long-tail slices, paired bootstrap intervals, and engineering costs.
+  anonymous rating archive. It compares train-only popularity, CountSketch CF, LightFM-ID, and LightFM-Hybrid on
+  identical users with NDCG/Recall/HR/MRR, coverage/novelty/bias/diversity, activity and long-tail diagnostics,
+  threshold sensitivity, paired bootstrap intervals, and engineering costs.
 
 The personalized methodology, commands, artifacts, and limitations are documented in
-[data/evaluation/personalized/README.md](data/evaluation/personalized/README.md). No new recommender algorithm is
-introduced by that benchmark.
+[data/evaluation/personalized/README.md](data/evaluation/personalized/README.md). LightFM remains an offline
+challenger and is not wired into the production hybrid.
 
-### Personalized held-out smoke benchmark
+### Personalized LightFM challenger
 
-The primary result below is a deterministic uniform sample of 100 eligible users from a full-data, train-only
-split (`rating >= 8`, seed 42). It is a smoke benchmark, not a full-population result.
+The primary result is a deterministic, representative 1,000-user sample from the full-data train-only split
+(`rating >= 8`, seed 42). The complete decision also uses 100 users per activity stratum, a quota of 100 qualifying
+users per item-popularity stratum, and fixed-configuration threshold-7/8/9 sensitivity runs.
 
-| Model | NDCG@10 | Recall@10 | HR@10 | NDCG@20 | Recall@20 | MRR@20 | Coverage | p50 rank latency |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Popularity | 0.1035 | 0.0877 | 0.4200 | 0.1184 | 0.1367 | 0.2265 | 0.0039 | 0.41 ms |
-| CountSketch CF | 0.1392 | 0.1462 | 0.5300 | 0.1594 | 0.2226 | 0.2541 | **0.0214** | 9.65 ms |
-| Current hybrid | **0.1506** | **0.1586** | **0.5500** | **0.1738** | **0.2413** | **0.2650** | 0.0210 | 1,151.58 ms |
+| Model | NDCG@10 | Recall@10 | HR@10 | Coverage | Novelty | ILD | p50 rank latency |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Popularity | 0.1023 | 0.0881 | 0.4420 | 0.0059 | 8.424 | 0.8222 | 0.22 ms |
+| CountSketch CF | 0.1534 | 0.1408 | 0.5840 | **0.0775** | **9.639** | **0.8264** | 7.28 ms |
+| LightFM-ID | **0.1833** | **0.1589** | **0.6430** | 0.0380 | 9.152 | 0.7990 | 1.17 ms |
+| LightFM-Hybrid | 0.1747 | 0.1483 | 0.6250 | 0.0421 | 9.308 | 0.7770 | 1.16 ms |
 
-Against popularity, CountSketch improves NDCG@10 by 3.56 percentage points (paired 95% bootstrap CI
-`[+0.43, +6.90]`). The hybrid adds 1.14 points over CountSketch, but that interval crosses zero
-(`[-1.40, +3.76]`). More than 99.6% of collaborative/hybrid exposure is still in the train-defined head bucket,
-so long-tail performance is a clear weakness. See the
-[uniform report](data/evaluation/personalized/results/uniform_smoke/report.md) and the
-[activity-balanced diagnostic](data/evaluation/personalized/results/balanced_smoke/report.md).
+LightFM-ID improves NDCG@10 over CountSketch by 2.99 percentage points (+19.51%; paired 95% CI
+`[+1.71, +4.28]` points). It is **not promoted**: catalog coverage is roughly halved, sparse-user and tail-item
+retrieval regress, static metadata does not help, and the lift disappears at rating threshold 9. The evidence-driven
+decision is to retain CountSketch and gather more evidence. See the
+[LightFM decision report](data/evaluation/personalized/results/lightfm_challenger_summary.md).
 
 ### Catalog/agent regression benchmark
 
@@ -272,7 +273,8 @@ Provider credentials are loaded only from ignored backend environment files. Req
 
 ## Limitations
 
-- The offline benchmark is too small to establish real preference quality.
+- Offline metrics cannot establish real user satisfaction; the 1,000-user result still needs a predeclared larger
+  confirmation before any production model substitution.
 - The interaction snapshot ends in 2020; post-snapshot titles rely on content and quality channels until newer ratings are available.
 - Session personalization is anonymous, local, and not synchronized across devices.
 - The archive stops at 2022 and has missing studio/staff data; retained enrichment extends coverage but is not a complete relationship graph.
@@ -283,6 +285,9 @@ Provider credentials are loaded only from ignored backend environment files. Req
 
 - Built a local-first anime recommendation Agent with FastAPI, Pydantic-constrained LLM intent parsing, typed tool routing, and catalog-grounded response validation across Gemini and Ollama/Gemma 3 providers.
 - Implemented an explainable hybrid recommender over 18,064 titles and 56.7M anonymous ratings using scalable user-centred collaborative projections, metadata/synopsis TF-IDF, LSA, creator signals, hard entity joins, diversity reranking, and session feedback.
-- Built a reproducible data-quality and ablation pipeline plus 129 automated API, Agent, ranking, artifact-integrity, security, and transcript regression tests, with graceful deterministic fallback when LLM providers are unavailable.
+- Built a reproducible data-quality and ablation pipeline plus 160+ automated API, Agent, ranking, artifact-integrity, security, and transcript regression tests, with graceful deterministic fallback when LLM providers are unavailable.
+- Evaluated LightFM-ID and metadata-hybrid challengers with validation-only WARP/BPR selection, paired bootstrap
+  intervals, activity/tail diagnostics, threshold sensitivity, and NumPy-only serving artifacts; retained the
+  simpler production model when coverage and sparse-user guardrails failed.
 
 The source code is available under the [MIT License](LICENSE). Dataset-derived artifacts retain their [CC0 attribution](DATASET_ATTRIBUTION.md).

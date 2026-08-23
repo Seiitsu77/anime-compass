@@ -1,0 +1,398 @@
+{
+  "build_details": {
+    "countsketch": {
+      "metadata": {
+        "artifact_version": 1,
+        "build_duration_seconds": 37.047466,
+        "catalog_items": 18064,
+        "dimensions": 384,
+        "global_rating_mean": 7.42074,
+        "items_with_ratings": 15548,
+        "measured_wall_seconds": 37.597197099996265,
+        "method": "user-centred CountSketch item similarity",
+        "projection_width": 128,
+        "projections": 3,
+        "ratings_used": 53623096,
+        "split_sha256": "e921d76c8ee3493c84435021372e6c1fab5f40d6af9d8b5b745e7d429f7d1d32",
+        "training_source": "personalized split train ratings",
+        "users_seen": 309484
+      },
+      "process_peak_rss_after_bytes": 791789568,
+      "process_rss_after_bytes": 582373376,
+      "process_rss_before_bytes": 578572288,
+      "python_tracemalloc_peak_bytes": null,
+      "reused": false
+    },
+    "lightfm": {
+      "lightfm_id": {
+        "artifact_load_duration_seconds": 0.08668950002174824,
+        "numpy_score_roundtrip_max_abs_error": 4.76837158203125e-07,
+        "peak_training_process_rss_bytes": 1051537408,
+        "total_tuning_duration_seconds": 67.11386,
+        "training_duration_seconds": 51.480528
+      }
+    },
+    "split_sha256": "e921d76c8ee3493c84435021372e6c1fab5f40d6af9d8b5b745e7d429f7d1d32",
+    "training_statistics": {
+      "duration_seconds": 21.809478399984073,
+      "positive_interactions": 13257591,
+      "process_rss_after_bytes": 577650688,
+      "process_rss_before_bytes": 567926784,
+      "process_rss_delta_bytes": 9723904,
+      "python_tracemalloc_peak_bytes": null
+    }
+  },
+  "dataset": {
+    "catalog_items": 18064,
+    "catalog_sha256": "2ef54a712f63eec2adc33f21bd431fc66ab097ba135ab440fd3d773f84668c75",
+    "dataset_sha256": "b60519348a90bd5e02c25355b374f7ca055a0637a237f0e163447953b13ffaa0",
+    "dataset_sha256_scope": "full_file",
+    "explicit_negative_ratings": 6054274,
+    "ignored_ratings": 14514054,
+    "neutral_ratings": 19797177,
+    "rating_threshold": 9,
+    "source_file": "rating_complete.csv",
+    "source_orphan_rows": 906417,
+    "source_rows_scanned": 57633278,
+    "source_user_limit": null,
+    "split_audit": {
+      "eligible_users": 280257,
+      "orphan_rows": 906417,
+      "passed": true,
+      "stored_ratings": 56726861,
+      "stored_users": 310059
+    },
+    "split_build_duration_seconds": 120.311012,
+    "split_seed": 42,
+    "split_sha256": "e921d76c8ee3493c84435021372e6c1fab5f40d6af9d8b5b745e7d429f7d1d32",
+    "test_positive_interactions": 1576055,
+    "train_positive_density": 0.002367044105046198,
+    "train_positive_interactions": 13257591,
+    "train_positive_matrix_sparsity": 0.9976329558949538,
+    "train_positive_sparsity": 0.002367044105046198,
+    "users_after_filter": 280257,
+    "users_before_filter": 310059,
+    "validation_positive_interactions": 1527710
+  },
+  "environment": {
+    "logical_cpu_count": 24,
+    "numpy": "1.26.4",
+    "peak_process_rss_bytes": 791789568,
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+    "python": "3.10.21"
+  },
+  "evaluation_duration_seconds": 117.573024,
+  "evaluation_population": {
+    "aggregate_weighting": "unweighted macro-average over sampled users; no population reweighting",
+    "diagnostic_sample": false,
+    "eligible_population_segment_counts": {
+      "heavy": 188243,
+      "medium": 81311,
+      "sparse": 10703
+    },
+    "evaluated_users": 500,
+    "requested_per_stratum": null,
+    "requested_total": 500,
+    "sampling": "deterministic uniform hash sample",
+    "sampling_strategy": "uniform",
+    "segment_counts": {
+      "heavy": 326,
+      "medium": 147,
+      "sparse": 27
+    },
+    "selection_target": "eligible users only; no held-out outcome stratification",
+    "stratum_population_counts": {
+      "eligible": 280257
+    },
+    "stratum_selected_counts": {
+      "eligible": 500
+    },
+    "user_ids_sha256": "a945dc3751136a62a75921c546643ed318d5e85ae09a0d499b2558f732d4705f"
+  },
+  "generated_at": "2026-08-23T00:02:03.239485+00:00",
+  "item_popularity_bucket_definition": {
+    "head": "top 20% of catalog items by count",
+    "long_tail": "bottom 50% of catalog items by count, including zero-count items",
+    "mid_tail": "next 30% of catalog items by count",
+    "source": "positive training interaction count only",
+    "tie_breaker": "anime_id ascending"
+  },
+  "methodology_note": "Because interaction timestamps are unavailable, this evaluation measures preference reconstruction/generalization under a deterministic user-stratified random holdout, not chronological next-item prediction.",
+  "metric_definitions": {
+    "beyond_accuracy_scope": "Coverage, novelty, popularity bias, exposure, and ILD use top-20 rankings.",
+    "catalog_coverage": "Unique recommended catalog IDs divided by candidate catalog size.",
+    "intra_list_diversity": "Mean pairwise Jaccard distance over catalog genre sets; empty/empty distance is zero.",
+    "mrr": "Reciprocal rank of the first test positive within the top 20.",
+    "novelty_bits": "Mean -log2((train positive count + 1)/(all train positives + catalog size)).",
+    "popularity_bias": "Mean per-user normalized-log popularity of recommendations minus training-positive history.",
+    "ranking": "Per-user binary relevance; aggregate values are unweighted means across users.",
+    "serialization": "Timing covers compact ranking-ID JSON serialization, not the production HTTP response payload."
+  },
+  "models": [
+    {
+      "catalog_coverage": 0.04899247121346324,
+      "engineering": {
+        "artifact": {
+          "files": [
+            "countsketch_train_only.npz"
+          ],
+          "sha256": "696e536be2955f41e4759cacb153f3f9a03586ca102810217781f5dd9aba4cc0",
+          "size_bytes": 15012901
+        },
+        "build_duration_seconds": 37.597197099996265,
+        "inference_latency_p50_ms": 7.754649996059015,
+        "inference_latency_p95_ms": 8.556939990376122,
+        "offline_peak_process_rss_bytes": 791789568,
+        "offline_training_duration_seconds": 37.597197099996265,
+        "resident_array_bytes": 28179840,
+        "serialization_latency_p50_ms": 0.02039998071268201,
+        "serialization_latency_p95_ms": 0.02239999594166875,
+        "stage_latency_ms": {}
+      },
+      "evaluated_users": 500,
+      "heldout_item_popularity": {
+        "head": {
+          "heldout_items": 2685,
+          "ndcg_at_10": 0.17942214773028986,
+          "recall_at_10": 0.21343606245298277,
+          "users": 500
+        },
+        "long_tail": {
+          "heldout_items": 2,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 1
+        },
+        "mid_tail": {
+          "heldout_items": 69,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 37
+        }
+      },
+      "hit_rate_at_10": 0.536,
+      "intra_list_diversity": 0.8253680466463361,
+      "model": "countsketch_cf",
+      "model_config": {
+        "dimensions": 384,
+        "method": "user-centred CountSketch item similarity",
+        "profile_feedback": "positive training interactions",
+        "training_feedback": "all observed train ratings, classes kept distinct"
+      },
+      "model_version": "user-centred-countsketch-v1",
+      "mrr": 0.2725115660826961,
+      "ndcg_at_10": 0.17881384467527234,
+      "ndcg_at_20": 0.20244952857407653,
+      "novelty_bits": 9.260614645102027,
+      "popularity_bias": 0.05559103386408739,
+      "recall_at_10": 0.2119793540099171,
+      "recall_at_20": 0.2857609493346568,
+      "recommendation_exposure": {
+        "head": 0.9927,
+        "long_tail": 0.0014,
+        "mid_tail": 0.0059,
+        "unknown": 0.0
+      },
+      "user_segments": {
+        "heavy": {
+          "hit_rate_at_10": 0.6380368098159509,
+          "ndcg_at_10": 0.18005181995019273,
+          "recall_at_10": 0.18861864111950472,
+          "users": 326
+        },
+        "medium": {
+          "hit_rate_at_10": 0.3673469387755102,
+          "ndcg_at_10": 0.18880532950088702,
+          "recall_at_10": 0.2619047619047619,
+          "users": 147
+        },
+        "sparse": {
+          "hit_rate_at_10": 0.2222222222222222,
+          "ndcg_at_10": 0.10946835545344255,
+          "recall_at_10": 0.2222222222222222,
+          "users": 27
+        }
+      }
+    },
+    {
+      "catalog_coverage": 0.027347209920283437,
+      "engineering": {
+        "artifact": {
+          "files": [
+            "lightfm_id.npz"
+          ],
+          "sha256": "463e8298ad3c70d96dba2d50fd8195f8505573f209d79824aece0d6e20368d3b",
+          "size_bytes": 20765049
+        },
+        "build_duration_seconds": 51.480528,
+        "inference_latency_p50_ms": 1.2693500029854476,
+        "inference_latency_p95_ms": 1.6471800176077511,
+        "offline_peak_process_rss_bytes": 1051537408,
+        "offline_training_duration_seconds": 67.11386,
+        "resident_array_bytes": 24616476,
+        "serialization_latency_p50_ms": 0.019499973859637976,
+        "serialization_latency_p95_ms": 0.027105002664029595,
+        "stage_latency_ms": {}
+      },
+      "evaluated_users": 500,
+      "heldout_item_popularity": {
+        "head": {
+          "heldout_items": 2685,
+          "ndcg_at_10": 0.17997127492070408,
+          "recall_at_10": 0.20865319523930553,
+          "users": 500
+        },
+        "long_tail": {
+          "heldout_items": 2,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 1
+        },
+        "mid_tail": {
+          "heldout_items": 69,
+          "ndcg_at_10": 0.0,
+          "recall_at_10": 0.0,
+          "users": 37
+        }
+      },
+      "hit_rate_at_10": 0.544,
+      "intra_list_diversity": 0.8094405678093834,
+      "model": "lightfm_id",
+      "model_config": {
+        "candidate_catalog": "full catalog minus all known training ratings",
+        "feature_summary": {
+          "identity_feature_count": 18064,
+          "included_fields": [],
+          "metadata_feature_count": 0,
+          "normalization": "identity matrix",
+          "schema_version": 1
+        },
+        "selected_config": {
+          "epochs": 3,
+          "item_alpha": 1e-06,
+          "learning_rate": 0.05,
+          "loss": "warp",
+          "max_sampled": 10,
+          "no_components": 16,
+          "user_alpha": 1e-06
+        },
+        "selected_validation_metrics": {
+          "catalog_coverage": 0.02424712134632418,
+          "hit_rate_at_10": 0.55,
+          "inference_latency_p50_ms": 1.2246499973116443,
+          "inference_latency_p95_ms": 1.4597199973650277,
+          "intra_list_diversity": 0.8101382755889335,
+          "mrr": 0.3019116736949554,
+          "ndcg_at_10": 0.1844057881785735,
+          "ndcg_at_20": 0.21562641613141892,
+          "novelty_bits": 8.716329063537758,
+          "popularity_bias": 0.08399946570327078,
+          "recall_at_10": 0.2147572603584551,
+          "recall_at_20": 0.3167539019547717,
+          "validation_target": "validation_positive only; test positives were not read",
+          "validation_users": 300
+        },
+        "selection_data": "validation positives only; test positives were not accessed",
+        "serving_runtime": "NumPy-only exported embeddings and biases",
+        "total_tuning_duration_seconds": 67.11386,
+        "trainer": "LightFM",
+        "training_feedback": "positive training interactions only; explicit negatives remain separate and unused",
+        "variant": "lightfm_id"
+      },
+      "model_version": "lightfm-export-v1",
+      "mrr": 0.28658426069974063,
+      "ndcg_at_10": 0.17925010177646325,
+      "ndcg_at_20": 0.20685278893013018,
+      "novelty_bits": 8.740332177895212,
+      "popularity_bias": 0.08713954030302362,
+      "recall_at_10": 0.20685213175213243,
+      "recall_at_20": 0.29454961941119884,
+      "recommendation_exposure": {
+        "head": 1.0,
+        "long_tail": 0.0,
+        "mid_tail": 0.0,
+        "unknown": 0.0
+      },
+      "user_segments": {
+        "heavy": {
+          "hit_rate_at_10": 0.6625766871165644,
+          "ndcg_at_10": 0.2012047328830794,
+          "recall_at_10": 0.20069345360756513,
+          "users": 326
+        },
+        "medium": {
+          "hit_rate_at_10": 0.3469387755102041,
+          "ndcg_at_10": 0.13802209506125926,
+          "recall_at_10": 0.22448979591836735,
+          "users": 147
+        },
+        "sparse": {
+          "hit_rate_at_10": 0.18518518518518517,
+          "ndcg_at_10": 0.13863185164231717,
+          "recall_at_10": 0.18518518518518517,
+          "users": 27
+        }
+      }
+    }
+  ],
+  "paired_bootstrap": [
+    {
+      "ci_excludes_zero": false,
+      "ci_lower": -0.018509980735084267,
+      "ci_upper": 0.020833988475390256,
+      "difference": 0.0004362571011907481,
+      "iterations": 1000,
+      "left_model": "lightfm_id",
+      "metric": "ndcg_at_10",
+      "relative_difference": 0.0024397277625957618,
+      "right_model": "countsketch_cf",
+      "seed": 42,
+      "users": 500
+    },
+    {
+      "ci_excludes_zero": false,
+      "ci_lower": -0.030115982077978012,
+      "ci_upper": 0.020925619483266822,
+      "difference": -0.005127222257784618,
+      "iterations": 1000,
+      "left_model": "lightfm_id",
+      "metric": "recall_at_10",
+      "relative_difference": -0.02418736617880604,
+      "right_model": "countsketch_cf",
+      "seed": 42,
+      "users": 500
+    }
+  ],
+  "run_config": {
+    "bootstrap_iterations": 1000,
+    "countsketch_projections": 3,
+    "countsketch_width": 128,
+    "force_model_rebuild": false,
+    "max_evaluation_users": 500,
+    "model_names": [
+      "countsketch_cf",
+      "lightfm_id"
+    ],
+    "progress_every": 100,
+    "recommendation_k": 20,
+    "sample_seed": 42,
+    "sampling_strategy": "uniform",
+    "users_per_stratum": null
+  },
+  "run_scope": "sampled",
+  "schema_version": 2,
+  "what_this_can_tell_us": [
+    "Personalized ranking quality under deterministic random held-out positive interactions.",
+    "Whether the current collaborative signal adds value over train-only popularity.",
+    "Whether LightFM collaborative challengers add value over CountSketch when included in the run.",
+    "How ranking quality changes with training-positive user activity.",
+    "Recommendation exposure and recovery across train-defined item popularity buckets."
+  ],
+  "what_this_cannot_tell_us": [
+    "Chronological next-anime prediction because the source has no interaction timestamps.",
+    "Real online click-through rate or recommendation acceptance.",
+    "Causal user satisfaction.",
+    "Production A/B-test performance without online traffic."
+  ]
+}

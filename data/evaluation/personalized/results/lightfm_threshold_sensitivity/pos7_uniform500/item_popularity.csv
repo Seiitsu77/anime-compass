@@ -1,0 +1,7 @@
+model,bucket,users,heldout_items,recall_at_10,ndcg_at_10,recommendation_exposure
+countsketch_cf,head,499,6759,0.11619813257687696,0.1475403184096329,0.9916
+countsketch_cf,long_tail,7,7,0.0,0.0,0.0008
+countsketch_cf,mid_tail,111,303,0.0,0.0,0.0076
+lightfm_id,head,499,6759,0.1411711768286968,0.18952464902332464,1.0
+lightfm_id,long_tail,7,7,0.0,0.0,0.0
+lightfm_id,mid_tail,111,303,0.0,0.0,0.0

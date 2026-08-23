@@ -1,0 +1,13 @@
+model,bucket,users,heldout_items,recall_at_10,ndcg_at_10,recommendation_exposure
+popularity,head,100,917,0.09311068572977561,0.10271973568178623,1.0
+popularity,long_tail,11,11,0.0,0.0,0.0
+popularity,mid_tail,20,41,0.0,0.0,0.0
+countsketch_cf,head,100,917,0.09720939694169436,0.12179310354131256,0.94
+countsketch_cf,long_tail,11,11,0.0,0.0,0.01
+countsketch_cf,mid_tail,20,41,0.0,0.0,0.05
+lightfm_id,head,100,917,0.08396561207218806,0.10253053435718845,1.0
+lightfm_id,long_tail,11,11,0.0,0.0,0.0
+lightfm_id,mid_tail,20,41,0.0,0.0,0.0
+lightfm_hybrid,head,100,917,0.053299353755957526,0.07620422906040467,0.999
+lightfm_hybrid,long_tail,11,11,0.0,0.0,0.0
+lightfm_hybrid,mid_tail,20,41,0.0,0.0,0.001
