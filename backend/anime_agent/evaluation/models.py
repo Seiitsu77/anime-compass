@@ -13,6 +13,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from backend.anime_agent.collaborative import ARTIFACT_VERSION, CollaborativeIndex
+from backend.anime_agent.lightfm_serving import LightFMServingIndex
 from backend.anime_agent.recommender import DEFAULT_CHANNEL_WEIGHTS, MODEL_VERSION, AnimeRecommender
 
 from .split import SplitStore, UserSplit, sha256_file
@@ -317,6 +318,45 @@ class CountSketchModel:
             key=lambda anime_id: (-scores.get(anime_id, 0.0), anime_id),
         )
         return OfflineRecommendation(results, {"profile_score_count": len(scores)})
+
+
+class LightFMModel:
+    version = "lightfm-export-v1"
+
+    def __init__(self, index: LightFMServingIndex, *, name: str, artifact_path: Path):
+        if name not in {"lightfm_id", "lightfm_hybrid"}:
+            raise ValueError("LightFM evaluation model name is invalid")
+        expected_variant = index.metadata.get("variant")
+        if expected_variant != name:
+            raise ValueError(f"LightFM artifact variant {expected_variant!r} does not match {name!r}")
+        self.name = name
+        self.index = index
+        self.artifact_path = Path(artifact_path)
+        self.build_duration_seconds = float(index.metadata.get("selected_training_duration_seconds", 0.0))
+        self.offline_training_duration_seconds = float(
+            index.metadata.get("total_search_duration_seconds", self.build_duration_seconds)
+        )
+        self.offline_peak_process_rss_bytes = index.metadata.get("peak_process_rss_bytes")
+        self.resident_array_bytes = index.resident_array_bytes
+        self.config = {
+            "trainer": "LightFM",
+            "variant": name,
+            "selected_config": dict(index.metadata.get("selected_config") or {}),
+            "selection_data": index.metadata.get("selection_data"),
+            "selected_validation_metrics": dict(index.metadata.get("selected_validation_metrics") or {}),
+            "feature_summary": dict(index.metadata.get("feature_summary") or {}),
+            "training_feedback": "positive training interactions only; explicit negatives remain separate and unused",
+            "candidate_catalog": "full catalog minus all known training ratings",
+            "serving_runtime": "NumPy-only exported embeddings and biases",
+            "total_tuning_duration_seconds": float(index.metadata.get("total_search_duration_seconds", 0.0)),
+        }
+
+    def recommend(self, user: UserSplit, k: int) -> OfflineRecommendation:
+        known = [anime_id for anime_id, _rating in user.all_observed_training_ratings]
+        return OfflineRecommendation(
+            self.index.recommend(user.user_id, known_ids=known, k=k),
+            {},
+        )
 
 
 def sanitize_catalog_with_training_statistics(

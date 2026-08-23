@@ -7,7 +7,7 @@ import sqlite3
 import struct
 import time
 import zlib
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -104,6 +104,18 @@ class UserSplit:
         return (*self.train_positive, *self.explicit_negative, *self.neutral, *self.ignored)
 
 
+@dataclass(frozen=True)
+class EvaluationSample:
+    user_ids: tuple[int, ...]
+    strategy: str
+    diagnostic: bool
+    requested_total: int | None
+    requested_per_stratum: int | None
+    stratum_population_counts: dict[str, int]
+    stratum_selected_counts: dict[str, int]
+    selection_target: str
+
+
 def holdout_sizes(positive_count: int, minimum_positives: int = 5) -> tuple[int, int]:
     """Return deterministic validation/test counts for one user's positives."""
     if positive_count < minimum_positives:
@@ -189,6 +201,12 @@ class SplitStore:
         metadata = {str(row["key"]): json.loads(str(row["value_json"])) for row in rows}
         if metadata.get("schema_version") != SPLIT_SCHEMA_VERSION:
             raise ValueError("Unsupported personalized split artifact schema")
+        # Schema v3 historically named the observed-density value
+        # ``train_positive_sparsity``. Preserve that key for artifact
+        # compatibility while exposing unambiguous derived values.
+        legacy_density = float(metadata.get("train_positive_sparsity", 0.0))
+        metadata.setdefault("train_positive_density", legacy_density)
+        metadata.setdefault("train_positive_matrix_sparsity", 1.0 - legacy_density)
         return metadata
 
     def iter_users(self, *, eligible_only: bool = False) -> Iterator[UserSplit]:
@@ -242,6 +260,14 @@ class SplitStore:
                 "SELECT user_id, train_positive_count FROM user_splits WHERE eligible = 1 ORDER BY user_id"
             ).fetchall()
         return [(int(row[0]), int(row[1])) for row in rows]
+
+    def training_user_ids(self) -> list[int]:
+        """Return sorted users with at least one positive training edge."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT user_id FROM user_splits WHERE train_positive_count > 0 ORDER BY user_id"
+            ).fetchall()
+        return [int(row[0]) for row in rows]
 
     def eligible_segment_counts(self) -> dict[str, int]:
         with self._connect() as connection:
@@ -585,6 +611,12 @@ def build_split_store(
             "train_positive_sparsity": (
                 counters["train_positive_interactions"] / train_denominator if train_denominator else 0.0
             ),
+            "train_positive_density": (
+                counters["train_positive_interactions"] / train_denominator if train_denominator else 0.0
+            ),
+            "train_positive_matrix_sparsity": (
+                1.0 - counters["train_positive_interactions"] / train_denominator if train_denominator else 1.0
+            ),
             "build_duration_seconds": round(time.perf_counter() - started, 6),
         }
         connection.executemany(
@@ -657,37 +689,150 @@ def select_evaluation_user_ids(
     limit: int | None,
     seed: int,
     strategy: str = "uniform",
+    users_per_stratum: int | None = None,
+    bucket_by_id: Mapping[int, str] | None = None,
 ) -> list[int]:
-    """Select identical users for every model while retaining IDs only."""
-    if strategy not in {"uniform", "stratified"}:
-        raise ValueError("sampling strategy must be 'uniform' or 'stratified'")
-    if limit is None or limit <= 0:
-        return store.eligible_user_ids()
+    """Backward-compatible ID-only wrapper around ``select_evaluation_sample``."""
+    return list(
+        select_evaluation_sample(
+            store,
+            limit=limit,
+            seed=seed,
+            strategy=strategy,
+            users_per_stratum=users_per_stratum,
+            bucket_by_id=bucket_by_id,
+        ).user_ids
+    )
+
+
+def select_evaluation_sample(
+    store: SplitStore,
+    *,
+    limit: int | None,
+    seed: int,
+    strategy: str = "uniform",
+    users_per_stratum: int | None = None,
+    bucket_by_id: Mapping[int, str] | None = None,
+) -> EvaluationSample:
+    """Select one deterministic evaluation population for every model.
+
+    ``uniform`` is the only representative sample. ``activity_stratified``
+    and ``popularity_stratified`` are deliberately balanced diagnostics whose
+    unweighted aggregate metrics must not be interpreted as population means.
+    The popularity diagnostic uses test relevance only to choose diagnostic
+    users; item buckets themselves are supplied from train-only statistics.
+    """
+    aliases = {"stratified": "activity_stratified"}
+    strategy = aliases.get(strategy, strategy)
+    allowed = {"uniform", "activity_stratified", "popularity_stratified"}
+    if strategy not in allowed:
+        raise ValueError(f"sampling strategy must be one of {sorted(allowed)}")
+    if users_per_stratum is not None and users_per_stratum < 1:
+        raise ValueError("users_per_stratum must be positive when provided")
     activity = store.eligible_user_activity()
     eligible_ids = [user_id for user_id, _count in activity]
-    if limit >= len(eligible_ids):
-        return eligible_ids
 
     def sample_key(user_id: int) -> tuple[bytes, int]:
         digest = hashlib.blake2b(f"sample:{seed}:{user_id}".encode(), digest_size=8).digest()
         return digest, user_id
 
     if strategy == "uniform":
-        return sorted(sorted(eligible_ids, key=sample_key)[:limit])
+        if users_per_stratum is not None:
+            raise ValueError("users_per_stratum is only valid for diagnostic sampling")
+        if limit is None or limit <= 0 or limit >= len(eligible_ids):
+            selected = eligible_ids
+        else:
+            selected = sorted(sorted(eligible_ids, key=sample_key)[:limit])
+        return EvaluationSample(
+            user_ids=tuple(selected),
+            strategy="uniform",
+            diagnostic=False,
+            requested_total=limit,
+            requested_per_stratum=None,
+            stratum_population_counts={"eligible": len(eligible_ids)},
+            stratum_selected_counts={"eligible": len(selected)},
+            selection_target="eligible users only; no held-out outcome stratification",
+        )
 
     groups: dict[str, list[int]] = {"sparse": [], "medium": [], "heavy": []}
-    for user_id, count in activity:
-        segment = "sparse" if count <= 4 else "medium" if count <= 19 else "heavy"
-        groups[segment].append(user_id)
-    base, remainder = divmod(limit, 3)
-    selected: set[int] = set()
-    for index, segment in enumerate(("sparse", "medium", "heavy")):
-        target = base + int(index < remainder)
-        selected.update(sorted(groups[segment], key=sample_key)[:target])
-    if len(selected) < limit:
-        remaining = (user_id for user_id in eligible_ids if user_id not in selected)
-        selected.update(sorted(remaining, key=sample_key)[: limit - len(selected)])
-    return sorted(selected)
+    if strategy == "activity_stratified":
+        for user_id, count in activity:
+            segment = "sparse" if count <= 4 else "medium" if count <= 19 else "heavy"
+            groups[segment].append(user_id)
+        if users_per_stratum is not None:
+            targets = {segment: users_per_stratum for segment in groups}
+        elif limit is None or limit <= 0:
+            targets = {segment: len(values) for segment, values in groups.items()}
+        else:
+            base, remainder = divmod(limit, 3)
+            targets = {
+                segment: base + int(index < remainder) for index, segment in enumerate(("sparse", "medium", "heavy"))
+            }
+        selected: set[int] = set()
+        for segment in ("sparse", "medium", "heavy"):
+            selected.update(sorted(groups[segment], key=sample_key)[: targets[segment]])
+        return EvaluationSample(
+            user_ids=tuple(sorted(selected)),
+            strategy="activity_stratified",
+            diagnostic=True,
+            requested_total=None if users_per_stratum is not None else limit,
+            requested_per_stratum=users_per_stratum,
+            stratum_population_counts={segment: len(values) for segment, values in groups.items()},
+            stratum_selected_counts={
+                segment: sum(user_id in selected for user_id in values) for segment, values in groups.items()
+            },
+            selection_target="training-positive activity segment",
+        )
+
+    if bucket_by_id is None:
+        raise ValueError("popularity_stratified sampling requires train-defined item buckets")
+    popularity_groups: dict[str, list[int]] = {"head": [], "mid_tail": [], "long_tail": []}
+    for user in store.iter_users(eligible_only=True):
+        relevant_buckets = {
+            bucket_by_id.get(int(anime_id))
+            for anime_id in user.test_positive_ids
+            if bucket_by_id.get(int(anime_id)) in popularity_groups
+        }
+        for bucket in relevant_buckets:
+            if bucket is not None:
+                popularity_groups[bucket].append(user.user_id)
+    if users_per_stratum is not None:
+        targets = {bucket: users_per_stratum for bucket in popularity_groups}
+    elif limit is None or limit <= 0:
+        targets = {bucket: len(values) for bucket, values in popularity_groups.items()}
+    else:
+        base, remainder = divmod(limit, 3)
+        targets = {
+            bucket: base + int(index < remainder) for index, bucket in enumerate(("head", "mid_tail", "long_tail"))
+        }
+    selected = set()
+    # Start with the rarest target so broadly qualifying head users cannot
+    # crowd out the diagnostic's scarce long-tail population.
+    for bucket in ("long_tail", "mid_tail", "head"):
+        already_qualified = sum(user_id in selected for user_id in popularity_groups[bucket])
+        needed = max(0, targets[bucket] - already_qualified)
+
+        def bucket_key(user_id: int, *, _bucket: str = bucket) -> tuple[bytes, int]:
+            digest = hashlib.blake2b(
+                f"sample:{seed}:popularity:{_bucket}:{user_id}".encode(),
+                digest_size=8,
+            ).digest()
+            return digest, user_id
+
+        candidates = (user_id for user_id in popularity_groups[bucket] if user_id not in selected)
+        selected.update(sorted(candidates, key=bucket_key)[:needed])
+    return EvaluationSample(
+        user_ids=tuple(sorted(selected)),
+        strategy="popularity_stratified",
+        diagnostic=True,
+        requested_total=None if users_per_stratum is not None else limit,
+        requested_per_stratum=users_per_stratum,
+        stratum_population_counts={bucket: len(values) for bucket, values in popularity_groups.items()},
+        stratum_selected_counts={
+            bucket: sum(user_id in selected for user_id in values) for bucket, values in popularity_groups.items()
+        },
+        selection_target="test-positive item popularity bucket; buckets computed from training positives only",
+    )
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:

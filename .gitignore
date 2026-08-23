@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+.lightfm-env/
+.tools/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

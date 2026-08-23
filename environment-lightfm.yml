@@ -1,0 +1,11 @@
+# Recommended for Linux or WSL. Native Windows must pass the WARP/BPR smoke
+# test documented in data/evaluation/personalized/README.md before a real run.
+name: anime-lightfm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - lightfm=1.17
+  - numpy=1.26
+  - scipy=1.15
+  - pytest=8.4

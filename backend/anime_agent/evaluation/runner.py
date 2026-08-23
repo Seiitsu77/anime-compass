@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 
 from backend.anime_agent.collaborative import CollaborativeIndex
+from backend.anime_agent.lightfm_serving import LightFMServingIndex
 from backend.anime_agent.recommender import AnimeRecommender
 
 from .metrics import (
@@ -35,6 +36,7 @@ from .metrics import (
 from .models import (
     CountSketchModel,
     CurrentHybridModel,
+    LightFMModel,
     OfflineEvaluationModel,
     PopularityModel,
     build_countsketch_artifact_from_split,
@@ -44,7 +46,7 @@ from .models import (
     sanitize_catalog_with_training_statistics,
     save_popularity_artifact,
 )
-from .split import METHODOLOGY_NOTE, SplitStore, UserSplit, select_evaluation_user_ids, sha256_file
+from .split import METHODOLOGY_NOTE, SplitStore, UserSplit, select_evaluation_sample, sha256_file
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,8 @@ class EvaluationRunConfig:
     sample_seed: int = 42
     sampling_strategy: str = "uniform"
     max_evaluation_users: int | None = 100
+    users_per_stratum: int | None = None
+    model_names: tuple[str, ...] = ("popularity", "countsketch_cf", "current_hybrid")
     recommendation_k: int = 20
     bootstrap_iterations: int = 2_000
     countsketch_projections: int = 3
@@ -66,8 +70,16 @@ class EvaluationRunConfig:
             raise ValueError("bootstrap_iterations must be positive")
         if self.progress_every < 1:
             raise ValueError("progress_every must be positive")
-        if self.sampling_strategy not in {"uniform", "stratified"}:
-            raise ValueError("sampling_strategy must be 'uniform' or 'stratified'")
+        allowed_sampling = {"uniform", "stratified", "activity_stratified", "popularity_stratified"}
+        if self.sampling_strategy not in allowed_sampling:
+            raise ValueError(f"sampling_strategy must be one of {sorted(allowed_sampling)}")
+        if self.users_per_stratum is not None and self.users_per_stratum < 1:
+            raise ValueError("users_per_stratum must be positive when provided")
+        allowed_models = {"popularity", "countsketch_cf", "current_hybrid", "lightfm_id", "lightfm_hybrid"}
+        names = tuple(self.model_names)
+        if not names or len(names) != len(set(names)) or not set(names).issubset(allowed_models):
+            raise ValueError(f"model_names must be a unique non-empty subset of {sorted(allowed_models)}")
+        object.__setattr__(self, "model_names", names)
 
 
 @dataclass(frozen=True)
@@ -229,6 +241,7 @@ def _prepare_models(
     catalog_path: Path,
     artifacts_dir: Path,
     config: EvaluationRunConfig,
+    lightfm_artifacts: Mapping[str, Path] | None = None,
 ) -> tuple[list[OfflineEvaluationModel], dict[str, Any], dict[int, int]]:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     split_sha256 = sha256_file(store.path)
@@ -280,33 +293,7 @@ def _prepare_models(
         build_duration_seconds=countsketch_seconds,
         artifact_path=countsketch_path,
     )
-
-    def build_hybrid() -> CurrentHybridModel:
-        evaluation_catalog = sanitize_catalog_with_training_statistics(
-            catalog,
-            statistics,
-            collaborative_index,
-        )
-        started = time.perf_counter()
-        recommender = AnimeRecommender(
-            evaluation_catalog,
-            collaborative_index=collaborative_index,
-        )
-        initialization_seconds = time.perf_counter() - started
-        return CurrentHybridModel(
-            recommender,
-            build_duration_seconds=initialization_seconds,
-            artifact_path=countsketch_path,
-            catalog_artifact_path=catalog_path,
-        )
-
-    hybrid_rss_before = _current_process_rss_bytes()
-    hybrid, measured_hybrid_seconds, _hybrid_trace_peak = _measure_build(
-        build_hybrid,
-        trace_allocations=False,
-    )
-    hybrid_rss_after = _current_process_rss_bytes()
-    hybrid.build_duration_seconds = measured_hybrid_seconds
+    countsketch.offline_peak_process_rss_bytes = countsketch_process_peak
 
     build_details = {
         "split_sha256": split_sha256,
@@ -330,7 +317,41 @@ def _prepare_models(
             "process_rss_after_bytes": countsketch_rss_after,
             "process_peak_rss_after_bytes": countsketch_process_peak,
         },
-        "hybrid": {
+        "lightfm": {},
+    }
+    models_by_name: dict[str, OfflineEvaluationModel] = {
+        "popularity": popularity,
+        "countsketch_cf": countsketch,
+    }
+
+    if "current_hybrid" in config.model_names:
+
+        def build_hybrid() -> CurrentHybridModel:
+            evaluation_catalog = sanitize_catalog_with_training_statistics(
+                catalog,
+                statistics,
+                collaborative_index,
+            )
+            recommender = AnimeRecommender(
+                evaluation_catalog,
+                collaborative_index=collaborative_index,
+            )
+            return CurrentHybridModel(
+                recommender,
+                build_duration_seconds=0.0,
+                artifact_path=countsketch_path,
+                catalog_artifact_path=catalog_path,
+            )
+
+        hybrid_rss_before = _current_process_rss_bytes()
+        hybrid, measured_hybrid_seconds, _hybrid_trace_peak = _measure_build(
+            build_hybrid,
+            trace_allocations=False,
+        )
+        hybrid_rss_after = _current_process_rss_bytes()
+        hybrid.build_duration_seconds = measured_hybrid_seconds
+        models_by_name["current_hybrid"] = hybrid
+        build_details["hybrid"] = {
             "process_rss_before_bytes": hybrid_rss_before,
             "process_rss_after_bytes": hybrid_rss_after,
             "process_rss_delta_bytes": (
@@ -339,9 +360,33 @@ def _prepare_models(
                 else None
             ),
             "measurement_note": "RSS delta is used because tracemalloc materially distorts hybrid initialization.",
-        },
-    }
-    return [popularity, countsketch, hybrid], build_details, statistics.positive_counts_by_id()
+        }
+
+    configured_lightfm_paths = dict(lightfm_artifacts or {})
+    for name in ("lightfm_id", "lightfm_hybrid"):
+        if name not in config.model_names:
+            continue
+        artifact_path = Path(configured_lightfm_paths.get(name, artifacts_dir / "lightfm" / f"{name}.npz"))
+        load_started = time.perf_counter()
+        index = LightFMServingIndex.load(artifact_path, catalog)
+        load_seconds = time.perf_counter() - load_started
+        if index.metadata.get("split_sha256") != split_sha256:
+            raise ValueError(f"{name} artifact was trained from a different personalized split")
+        model = LightFMModel(index, name=name, artifact_path=artifact_path)
+        models_by_name[name] = model
+        build_details["lightfm"][name] = {
+            "artifact_load_duration_seconds": load_seconds,
+            "training_duration_seconds": model.build_duration_seconds,
+            "total_tuning_duration_seconds": model.config["total_tuning_duration_seconds"],
+            "peak_training_process_rss_bytes": index.metadata.get("peak_process_rss_bytes"),
+            "numpy_score_roundtrip_max_abs_error": index.metadata.get("numpy_score_roundtrip_max_abs_error"),
+        }
+
+    return (
+        [models_by_name[name] for name in config.model_names],
+        build_details,
+        statistics.positive_counts_by_id(),
+    )
 
 
 def _evaluate_one_model(
@@ -513,6 +558,10 @@ def _evaluate_one_model(
         "heldout_item_popularity": heldout_item_popularity,
         "engineering": {
             "build_duration_seconds": model.build_duration_seconds,
+            "offline_training_duration_seconds": float(
+                getattr(model, "offline_training_duration_seconds", model.build_duration_seconds)
+            ),
+            "offline_peak_process_rss_bytes": getattr(model, "offline_peak_process_rss_bytes", None),
             "inference_latency_p50_ms": _percentile(latencies, 50),
             "inference_latency_p95_ms": _percentile(latencies, 95),
             "serialization_latency_p50_ms": _percentile(serialization_latencies, 50),
@@ -537,10 +586,16 @@ def _bootstrap_comparisons(
     iterations: int,
     seed: int,
 ) -> list[dict[str, Any]]:
-    comparisons = (
+    candidates = (
         ("countsketch_cf", "popularity"),
+        ("lightfm_id", "countsketch_cf"),
+        ("lightfm_hybrid", "countsketch_cf"),
+        ("lightfm_hybrid", "lightfm_id"),
         ("current_hybrid", "countsketch_cf"),
         ("current_hybrid", "popularity"),
+    )
+    comparisons = tuple(
+        (left, right) for left, right in candidates if left in metrics_by_model and right in metrics_by_model
     )
     result: list[dict[str, Any]] = []
     for left, right in comparisons:
@@ -549,17 +604,22 @@ def _bootstrap_comparisons(
         if not np.array_equal(left_metrics.user_ids, right_metrics.user_ids):
             raise RuntimeError(f"Cannot pair {left} and {right}: evaluated user IDs differ")
         for metric in ("ndcg_at_10", "recall_at_10"):
+            right_values = getattr(right_metrics, metric)
             interval = paired_bootstrap_aligned(
-                getattr(left_metrics, metric) - getattr(right_metrics, metric),
+                getattr(left_metrics, metric) - right_values,
                 iterations=iterations,
                 seed=seed,
             )
+            baseline = float(np.mean(right_values))
             result.append(
                 {
                     "left_model": left,
                     "right_model": right,
                     "metric": metric,
                     **interval,
+                    "relative_difference": (
+                        float(interval["difference"]) / baseline if abs(baseline) > 1e-12 else None
+                    ),
                     "ci_excludes_zero": bool(interval["ci_lower"] > 0 or interval["ci_upper"] < 0),
                 }
             )
@@ -592,14 +652,55 @@ def _dependency_inclusive_build_seconds(result: Mapping[str, Any], model_name: s
     statistics_seconds = float(result["build_details"]["training_statistics"]["duration_seconds"])
     if model_name == "popularity":
         return statistics_seconds
-    countsketch_seconds = float(models["countsketch_cf"]["engineering"]["build_duration_seconds"])
+    if model_name in {"lightfm_id", "lightfm_hybrid"}:
+        engineering = models[model_name]["engineering"]
+        return float(
+            engineering.get(
+                "offline_training_duration_seconds",
+                models[model_name]
+                .get("model_config", {})
+                .get(
+                    "total_tuning_duration_seconds",
+                    engineering["build_duration_seconds"],
+                ),
+            )
+        )
+    countsketch_seconds = float(
+        models.get("countsketch_cf", {})
+        .get("engineering", {})
+        .get(
+            "build_duration_seconds",
+            result.get("build_details", {})
+            .get("countsketch", {})
+            .get("metadata", {})
+            .get("build_duration_seconds", 0.0),
+        )
+    )
     if model_name == "countsketch_cf":
         return countsketch_seconds
-    return (
-        statistics_seconds
-        + countsketch_seconds
-        + float(models["current_hybrid"]["engineering"]["build_duration_seconds"])
-    )
+    if model_name == "current_hybrid":
+        return (
+            statistics_seconds
+            + countsketch_seconds
+            + float(models["current_hybrid"]["engineering"]["build_duration_seconds"])
+        )
+    return float(models[model_name]["engineering"]["build_duration_seconds"])
+
+
+def _offline_peak_rss_bytes(result: Mapping[str, Any], summary: Mapping[str, Any]) -> int | None:
+    engineering = summary["engineering"]
+    explicit = engineering.get("offline_peak_process_rss_bytes")
+    if explicit is not None:
+        return int(explicit)
+    name = str(summary["model"])
+    build_details = result.get("build_details", {})
+    if name in {"lightfm_id", "lightfm_hybrid"}:
+        value = build_details.get("lightfm", {}).get(name, {}).get("peak_training_process_rss_bytes")
+    elif name == "countsketch_cf":
+        value = build_details.get("countsketch", {}).get("process_peak_rss_after_bytes")
+    else:
+        value = None
+    return int(value) if value is not None else None
 
 
 def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
@@ -639,7 +740,9 @@ def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
         fields = [
             "model",
             "build_duration_seconds",
+            "offline_training_duration_seconds",
             "dependency_inclusive_build_duration_seconds",
+            "offline_peak_process_rss_bytes",
             "inference_latency_p50_ms",
             "inference_latency_p95_ms",
             "serialization_latency_p50_ms",
@@ -656,10 +759,18 @@ def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
                 {
                     "model": summary["model"],
                     "build_duration_seconds": engineering["build_duration_seconds"],
+                    "offline_training_duration_seconds": engineering.get(
+                        "offline_training_duration_seconds",
+                        summary.get("model_config", {}).get(
+                            "total_tuning_duration_seconds",
+                            engineering["build_duration_seconds"],
+                        ),
+                    ),
                     "dependency_inclusive_build_duration_seconds": _dependency_inclusive_build_seconds(
                         result, str(summary["model"])
                     ),
-                    **{field: engineering[field] for field in fields[3:8]},
+                    "offline_peak_process_rss_bytes": _offline_peak_rss_bytes(result, summary),
+                    **{field: engineering[field] for field in fields[5:10]},
                     "artifact_size_bytes": engineering["artifact"]["size_bytes"],
                     "artifact_sha256": engineering["artifact"]["sha256"],
                 }
@@ -675,6 +786,7 @@ def _write_bootstrap_csv(path: Path, comparisons: Sequence[Mapping[str, Any]]) -
         "iterations",
         "seed",
         "difference",
+        "relative_difference",
         "ci_lower",
         "ci_upper",
         "ci_excludes_zero",
@@ -683,7 +795,7 @@ def _write_bootstrap_csv(path: Path, comparisons: Sequence[Mapping[str, Any]]) -
         writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for comparison in comparisons:
-            writer.writerow({field: comparison[field] for field in fields})
+            writer.writerow({field: comparison.get(field) for field in fields})
 
 
 PER_USER_FIELDS = [
@@ -710,6 +822,7 @@ def run_personalized_evaluation(
     artifacts_dir: Path,
     output_dir: Path,
     config: EvaluationRunConfig | None = None,
+    lightfm_artifacts: Mapping[str, Path] | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     config = config or EvaluationRunConfig()
@@ -718,27 +831,36 @@ def run_personalized_evaluation(
     split_metadata = store.metadata()
     split_audit = store.audit_counts()
     eligible_segment_counts = store.eligible_segment_counts()
-    evaluation_user_ids = select_evaluation_user_ids(
-        store,
-        limit=config.max_evaluation_users,
-        seed=config.sample_seed,
-        strategy=config.sampling_strategy,
-    )
-    if not evaluation_user_ids:
-        raise ValueError("No eligible users are available for evaluation")
 
     if progress is not None:
-        progress(f"models: preparing train-only artifacts for {len(evaluation_user_ids):,} evaluation users")
+        progress("models: preparing train-only artifacts")
     models, build_details, train_positive_counts = _prepare_models(
         store,
         catalog,
         catalog_path=catalog_path,
         artifacts_dir=artifacts_dir,
         config=config,
+        lightfm_artifacts=lightfm_artifacts,
     )
     catalog_ids = {int(item["id"]) for item in catalog}
     genres_by_id = {int(item["id"]): list(item.get("genres") or []) for item in catalog}
     bucket_by_id = build_item_popularity_buckets(catalog_ids, train_positive_counts)
+    sample = select_evaluation_sample(
+        store,
+        limit=config.max_evaluation_users,
+        seed=config.sample_seed,
+        strategy=config.sampling_strategy,
+        users_per_stratum=config.users_per_stratum,
+        bucket_by_id=bucket_by_id,
+    )
+    evaluation_user_ids = list(sample.user_ids)
+    if not evaluation_user_ids:
+        raise ValueError("No eligible users are available for evaluation")
+    if progress is not None:
+        progress(
+            f"sample: selected {len(evaluation_user_ids):,} users using {sample.strategy}"
+            + (" diagnostic sampling" if sample.diagnostic else " sampling")
+        )
 
     summaries: list[dict[str, Any]] = []
     metrics_by_model: dict[str, AlignedPrimaryMetrics] = {}
@@ -779,9 +901,11 @@ def run_personalized_evaluation(
         sample_segment_counts[user_activity_segment(len(user.train_positive))] += 1
 
     result: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "run_scope": "full" if config.max_evaluation_users in (None, 0) else "sampled",
+        "run_scope": (
+            "diagnostic" if sample.diagnostic else "full" if config.max_evaluation_users in (None, 0) else "sampled"
+        ),
         "methodology_note": METHODOLOGY_NOTE,
         "run_config": asdict(config),
         "dataset": {
@@ -805,6 +929,8 @@ def run_personalized_evaluation(
             "neutral_ratings": split_metadata.get("neutral_ratings"),
             "ignored_ratings": split_metadata.get("ignored_ratings"),
             "train_positive_sparsity": split_metadata.get("train_positive_sparsity"),
+            "train_positive_density": split_metadata.get("train_positive_density"),
+            "train_positive_matrix_sparsity": split_metadata.get("train_positive_matrix_sparsity"),
             "catalog_items": len(catalog),
             "split_audit": split_audit,
         },
@@ -812,14 +938,23 @@ def run_personalized_evaluation(
             "evaluated_users": len(evaluation_user_ids),
             "sampling": (
                 "all eligible users"
-                if config.max_evaluation_users in (None, 0)
-                else f"deterministic {config.sampling_strategy} hash sample of eligible users"
+                if not sample.diagnostic and config.max_evaluation_users in (None, 0)
+                else f"deterministic {sample.strategy} hash sample"
             ),
+            "sampling_strategy": sample.strategy,
+            "diagnostic_sample": sample.diagnostic,
+            "selection_target": sample.selection_target,
+            "requested_total": sample.requested_total,
+            "requested_per_stratum": sample.requested_per_stratum,
+            "stratum_population_counts": sample.stratum_population_counts,
+            "stratum_selected_counts": sample.stratum_selected_counts,
             "segment_counts": dict(sorted(sample_segment_counts.items())),
             "eligible_population_segment_counts": eligible_segment_counts,
             "aggregate_weighting": (
                 "unweighted macro-average over all eligible users"
-                if config.max_evaluation_users in (None, 0)
+                if not sample.diagnostic and config.max_evaluation_users in (None, 0)
+                else "diagnostic sample only; unweighted aggregate is not a population estimate"
+                if sample.diagnostic
                 else "unweighted macro-average over sampled users; no population reweighting"
             ),
             "user_ids_sha256": hashlib_sha256_ids(evaluation_user_ids),
@@ -849,7 +984,7 @@ def run_personalized_evaluation(
         "what_this_can_tell_us": [
             "Personalized ranking quality under deterministic random held-out positive interactions.",
             "Whether the current collaborative signal adds value over train-only popularity.",
-            "Whether the current hybrid adds value over its CountSketch collaborative channel.",
+            "Whether LightFM collaborative challengers add value over CountSketch when included in the run.",
             "How ranking quality changes with training-positive user activity.",
             "Recommendation exposure and recovery across train-defined item popularity buckets.",
         ],
@@ -886,6 +1021,9 @@ def run_personalized_evaluation(
                 "name": summary["model"],
                 "version": summary["model_version"],
                 "hyperparameters": summary["model_config"],
+                "selected_fit_or_build_duration_seconds": summary["engineering"]["build_duration_seconds"],
+                "offline_training_duration_seconds": _dependency_inclusive_build_seconds(result, str(summary["model"])),
+                "offline_peak_process_rss_bytes": _offline_peak_rss_bytes(result, summary),
                 "training_or_build_duration_seconds": summary["engineering"]["build_duration_seconds"],
                 "artifact": summary["engineering"]["artifact"],
             }
@@ -912,9 +1050,13 @@ def run_personalized_evaluation(
 
 
 def refresh_derived_outputs(output_dir: Path) -> None:
-    """Regenerate report/CSV views from a completed immutable results JSON."""
+    """Regenerate normalized report/CSV views from completed results JSON."""
     output_dir = Path(output_dir)
     result = json.loads((output_dir / "results.json").read_text(encoding="utf-8"))
+    dataset = result.get("dataset", {})
+    legacy_density = float(dataset.get("train_positive_sparsity") or 0.0)
+    dataset.setdefault("train_positive_density", legacy_density)
+    dataset.setdefault("train_positive_matrix_sparsity", 1.0 - legacy_density)
     _write_text_lf(output_dir / "results.json", json.dumps(result, indent=2, sort_keys=True))
     summaries = result["models"]
     _write_summary_csv(output_dir / "summary.csv", summaries)
@@ -923,6 +1065,19 @@ def refresh_derived_outputs(output_dir: Path) -> None:
     _write_text_lf(output_dir / "report.md", render_markdown_report(result))
     manifest_path = output_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["models"] = [
+        {
+            "name": summary["model"],
+            "version": summary["model_version"],
+            "hyperparameters": summary["model_config"],
+            "selected_fit_or_build_duration_seconds": summary["engineering"]["build_duration_seconds"],
+            "offline_training_duration_seconds": _dependency_inclusive_build_seconds(result, str(summary["model"])),
+            "offline_peak_process_rss_bytes": _offline_peak_rss_bytes(result, summary),
+            "training_or_build_duration_seconds": summary["engineering"]["build_duration_seconds"],
+            "artifact": summary["engineering"]["artifact"],
+        }
+        for summary in summaries
+    ]
     for path in sorted(output_dir.iterdir()):
         if path.is_file() and path.name != "manifest.json":
             manifest["outputs"][path.name] = {
@@ -964,18 +1119,38 @@ def _fmt(value: Any, digits: int = 4) -> str:
 def render_markdown_report(result: Mapping[str, Any]) -> str:
     models = _model_by_name(result)
     bootstrap = _bootstrap_lookup(result)
-    model_order = ("popularity", "countsketch_cf", "current_hybrid")
+    model_order = tuple(str(model["model"]) for model in result["models"])
     labels = {
         "popularity": "Popularity",
         "countsketch_cf": "CountSketch CF",
         "current_hybrid": "Current Hybrid",
+        "lightfm_id": "LightFM-ID",
+        "lightfm_hybrid": "LightFM-Hybrid",
     }
+    evaluation_population = result["evaluation_population"]
+    sampling_strategy = str(
+        evaluation_population.get("sampling_strategy")
+        or result.get("run_config", {}).get("sampling_strategy", "uniform")
+    )
+    report_title = (
+        "LightFM Offline Challenger Benchmark"
+        if {"lightfm_id", "lightfm_hybrid"}.intersection(model_order)
+        else "Personalized Offline Recommendation Benchmark"
+    )
+    evaluation_label = {
+        "uniform": "Evaluation A — representative uniform user sample",
+        "stratified": "Evaluation B — activity-balanced diagnostic",
+        "activity_stratified": "Evaluation B — activity-balanced diagnostic",
+        "popularity_stratified": "Evaluation C — popularity-stratified diagnostic",
+    }.get(sampling_strategy, sampling_strategy)
     lines = [
-        "# Personalized Offline Recommendation Benchmark",
+        f"# {report_title}",
         "",
         f"> {result['methodology_note']}",
         "",
-        f"Run scope: **{result['run_scope']}**; evaluated users: **{result['evaluation_population']['evaluated_users']:,}**; "
+        f"Evaluation: **{evaluation_label}**.",
+        "",
+        f"Run scope: **{result['run_scope']}**; evaluated users: **{evaluation_population['evaluated_users']:,}**; "
         f"positive threshold: **{result['dataset']['rating_threshold']}**; split seed: **{result['dataset']['split_seed']}**.",
         "",
         "## Ranking and beyond-accuracy results",
@@ -1038,18 +1213,22 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             "",
             "Recommendation latency excludes HTTP, frontend rendering, LLM generation, and external APIs. Memory is the "
             "resident NumPy array footprint attributable to each loaded model; the run manifest separately records process peak RSS. "
-            "The hybrid uses its ranking-only interface, so deterministic explanation/result-payload construction is also excluded. "
-            "Incremental build is the model's own stage; end-to-end includes required shared train-statistics/CountSketch stages.",
+            "The current hybrid uses its ranking-only interface when present. LightFM latency uses exported NumPy arrays and does not "
+            "include the native training dependency. Selected fit is the winning candidate's fit time; offline total includes all "
+            "validation-search candidates. Peak RSS is the trainer process peak where available.",
             "",
-            "| Model | Incremental build | End-to-end build | p50 inference | p95 inference | Array memory | Artifact size |",
-            "|---|---:|---:|---:|---:|---:|---:|",
+            "| Model | Selected fit/build | Offline total | Peak RSS | p50 inference | p95 inference | Array memory | Artifact size |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for name in model_order:
         engineering = models[name]["engineering"]
+        peak_rss = _offline_peak_rss_bytes(result, models[name])
+        peak_rss_label = f"{int(peak_rss) / 1024 / 1024:.2f} MiB" if peak_rss is not None else "n/a"
         lines.append(
             f"| {labels[name]} | {engineering['build_duration_seconds']:.2f}s | "
             f"{_dependency_inclusive_build_seconds(result, name):.2f}s | "
+            f"{peak_rss_label} | "
             f"{engineering['inference_latency_p50_ms']:.2f}ms | {engineering['inference_latency_p95_ms']:.2f}ms | "
             f"{engineering['resident_array_bytes'] / 1024 / 1024:.2f} MiB | "
             f"{engineering['artifact']['size_bytes'] / 1024 / 1024:.2f} MiB |"
@@ -1063,7 +1242,7 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
         else "Whole-run process peak RSS was unavailable on this platform; per-model NumPy footprints remain reported."
     )
 
-    hybrid_stages = models["current_hybrid"]["engineering"]["stage_latency_ms"]
+    hybrid_stages = models["current_hybrid"]["engineering"]["stage_latency_ms"] if "current_hybrid" in models else {}
     if hybrid_stages:
         lines.extend(
             [
@@ -1080,26 +1259,64 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
         for stage, values in hybrid_stages.items():
             lines.append(f"| {stage.replace('_', ' ')} | {float(values['p50']):.2f}ms | {float(values['p95']):.2f}ms |")
 
+    lightfm_models = [name for name in ("lightfm_id", "lightfm_hybrid") if name in models]
+    if lightfm_models:
+        lines.extend(
+            [
+                "",
+                "## Validation-only LightFM model selection",
+                "",
+                "The final configurations below were selected using validation positives only. Test positives were evaluated only "
+                "after selection.",
+                "",
+                "| Model | Loss | Dimensions | Epochs | Validation NDCG@10 | Validation Recall@10 |",
+                "|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for name in lightfm_models:
+            config = models[name]["model_config"].get("selected_config", {})
+            validation = models[name]["model_config"].get("selected_validation_metrics", {})
+            lines.append(
+                f"| {labels[name]} | {str(config.get('loss', 'unknown')).upper()} | "
+                f"{int(config.get('no_components', 0))} | {int(config.get('epochs', 0))} | "
+                f"{_fmt(validation.get('ndcg_at_10', 0.0))} | {_fmt(validation.get('recall_at_10', 0.0))} |"
+            )
+
     lines.extend(["", "## Paired statistical comparisons", ""])
-    for left, right in (("countsketch_cf", "popularity"), ("current_hybrid", "countsketch_cf")):
+    comparison_pairs: list[tuple[str, str]] = []
+    for row in result["paired_bootstrap"]:
+        pair = (str(row["left_model"]), str(row["right_model"]))
+        if pair not in comparison_pairs:
+            comparison_pairs.append(pair)
+    for left, right in comparison_pairs:
         lines.append(f"### {labels[left]} vs {labels[right]}")
         lines.append("")
         for metric in ("ndcg_at_10", "recall_at_10"):
             interval = bootstrap[(left, right, metric)]
             readable = "NDCG@10" if metric == "ndcg_at_10" else "Recall@10"
+            relative = interval.get("relative_difference")
+            relative_text = f"; relative delta {float(relative) * 100:+.2f}%" if relative is not None else ""
             lines.append(
                 f"- Delta {readable}: {float(interval['difference']) * 100:+.2f} percentage points; "
                 f"95% paired-bootstrap CI [{float(interval['ci_lower']) * 100:+.2f}, "
-                f"{float(interval['ci_upper']) * 100:+.2f}] pp."
+                f"{float(interval['ci_upper']) * 100:+.2f}] pp{relative_text}."
             )
         lines.append("")
 
     lines.extend(["## Interpretation", ""])
+    diagnostic = bool(evaluation_population.get("diagnostic_sample"))
     sample_warning = result["run_scope"] != "full"
-    if sample_warning:
+    if diagnostic:
         lines.append(
-            "**This is a deterministic sampled run. Its findings are provisional; run the full eligible-user evaluation "
-            "before using small differences to select a model.**"
+            "**Diagnostic sample:** its unweighted aggregate metrics are not estimates of whole-population performance. "
+            "Use only the segment or popularity-stratum cuts that this evaluation was designed to inspect."
+        )
+        lines.append("")
+    elif sample_warning:
+        lines.append(
+            "**This is a deterministic representative sample. The paired intervals quantify user-level uncertainty inside "
+            "this sample; confirm borderline decisions on a predeclared larger sample rather than assuming a full-population "
+            "run is necessary.**"
         )
         lines.append("")
     if result["dataset"].get("source_user_limit") is not None:
@@ -1108,29 +1325,26 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             "not be compared with full-data experiments."
         )
         lines.append("")
-    if result["run_config"].get("sampling_strategy") == "stratified":
-        lines.append(
-            "**This activity-balanced sample intentionally gives each user segment equal quota. Aggregate metrics "
-            "are unweighted and therefore are not estimates of whole-population performance; use the uniform sample "
-            "for the primary aggregate comparison.**"
-        )
-        lines.append("")
-    for left, right, question in (
-        ("countsketch_cf", "popularity", "CountSketch versus popularity"),
-        ("current_hybrid", "countsketch_cf", "Hybrid versus CountSketch"),
-    ):
+    for left, right in comparison_pairs:
         interval = bootstrap[(left, right, "ndcg_at_10")]
         direction = "higher" if interval["difference"] > 0 else "lower" if interval["difference"] < 0 else "unchanged"
-        credible = "excludes zero" if interval["ci_excludes_zero"] else "includes zero"
+        evidence = (
+            "excludes zero, providing evidence of a difference in this evaluation"
+            if interval["ci_excludes_zero"]
+            else "includes zero, so the observed difference is not statistically conclusive"
+        )
         lines.append(
-            f"- **{question}:** NDCG@10 is {direction} by {abs(float(interval['difference'])) * 100:.2f} pp; "
-            f"the 95% interval {credible}."
+            f"- **{labels[left]} versus {labels[right]}:** NDCG@10 is {direction} by "
+            f"{abs(float(interval['difference'])) * 100:.2f} pp; the 95% interval {evidence}."
         )
     fastest = min(model_order, key=lambda name: models[name]["engineering"]["inference_latency_p50_ms"])
-    hybrid_latency = float(models["current_hybrid"]["engineering"]["inference_latency_p50_ms"])
-    lines.append(f"- **Latency:** {labels[fastest]} is fastest. Hybrid p50 is {hybrid_latency:.1f} ms.")
+    lines.append(
+        f"- **Latency:** {labels[fastest]} has the lowest p50 in this run "
+        f"({float(models[fastest]['engineering']['inference_latency_p50_ms']):.2f} ms)."
+    )
     eligible_users = int(result["dataset"].get("users_after_filter") or 0)
-    if sample_warning and eligible_users:
+    if sample_warning and eligible_users and "current_hybrid" in models:
+        hybrid_latency = float(models["current_hybrid"]["engineering"]["inference_latency_p50_ms"])
         projected_hours = eligible_users * hybrid_latency / 1000 / 60 / 60
         lines.append(
             f"- **Full-run bottleneck:** a simple serial extrapolation from sampled hybrid p50 is about "
@@ -1138,7 +1352,7 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             "not a measured full-run duration."
         )
     for segment in ("sparse", "medium", "heavy"):
-        if int(models["popularity"]["user_segments"][segment]["users"]):
+        if int(models[model_order[0]]["user_segments"][segment]["users"]):
             best = max(model_order, key=lambda name: models[name]["user_segments"][segment]["ndcg_at_10"])
             value = float(models[best]["user_segments"][segment]["ndcg_at_10"])
             lines.append(
@@ -1148,11 +1362,11 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
         "- **Popularity/long tail:** inspect exposure together with held-out long-tail Recall@10; a model can appear "
         "novel simply because the train-only artifact has little evidence for many items."
     )
-    lines.append(
-        "- **Next model:** the credible CountSketch-over-popularity lift justifies LightFM as the next offline challenger, "
-        "not a production replacement. Promotion still requires a larger held-out gain with acceptable coverage, bias, "
-        "and latency."
-    )
+    if lightfm_models:
+        lines.append(
+            "- **Promotion gate:** LightFM remains an offline challenger. Replacement requires a positive paired interval, "
+            "roughly 5% relative NDCG@10 lift, no material Recall/coverage/diversity regression, and acceptable serving cost."
+        )
 
     lines.extend(
         [
