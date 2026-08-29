@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     rate_limit_max_clients: int = Field(default=10_000, ge=100, le=1_000_000)
     session_cleanup_interval_seconds: int = Field(default=3600, ge=60, le=86_400)
     max_conversation_history: int = Field(default=12, ge=0, le=40)
+    # Bounded deterministic constraint relaxation when a catalog request is
+    # over-constrained. Zero disables replanning entirely.
+    max_replan_steps: int = Field(default=2, ge=0, le=5)
 
     llm_provider: Literal["gemini", "ollama"] = "ollama"
     gemini_api_key: SecretStr | None = None

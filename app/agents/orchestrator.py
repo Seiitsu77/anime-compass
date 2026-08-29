@@ -10,9 +10,11 @@ from app.core.config import Settings
 from app.core.errors import ProviderUnavailable
 from app.repositories.session_repository import SQLiteSessionRepository
 from backend.anime_agent.agent import AnimeAgent
+from backend.anime_agent.ollama_client import OllamaUnavailable
 from backend.anime_agent.recommender import AnimeRecommender
 
 from .base import AgentProvider
+from .replan import RETRIEVAL_INTENTS, replan_until_results, result_count
 from .schemas import AgentIntent, ProviderParseContext
 from .tools import CatalogToolRegistry, ToolContractError, ValidatedToolCall
 
@@ -20,12 +22,22 @@ logger = logging.getLogger("anime_compass.agent")
 
 
 class DeterministicClient:
+    """Stand-in provider for the legacy agent's deterministic paths.
+
+    `is_available()` is always False, so the agent never reaches `chat`; the
+    method exists to satisfy the ChatClient protocol and fails loudly if the
+    guard is ever removed.
+    """
+
     model = "deterministic"
     base_url = "local"
 
     @staticmethod
     def is_available() -> bool:
         return False
+
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        raise OllamaUnavailable("The deterministic client cannot generate text.")
 
 
 @dataclass
@@ -276,6 +288,9 @@ class AgentOrchestrator:
         provider_attempts: list[dict[str, Any]],
         parser_errors: list[str],
     ) -> tuple[dict[str, Any], AgentIntent, list[ValidatedToolCall]]:
+        # The first execution uses the legacy intent unchanged, so the
+        # non-replanning path is byte-for-byte what it was before replanning
+        # existed. Only relaxed candidates go through the schema round-trip.
         response = await asyncio.to_thread(
             self.legacy_agent._respond_from_intent,
             legacy_intent,
@@ -285,6 +300,47 @@ class AgentOrchestrator:
             session,
         )
         validated_intent = AgentIntent.from_legacy(legacy_intent)
+
+        def execute(candidate: AgentIntent, relaxed_fields: frozenset[str]) -> dict[str, Any]:
+            return self.legacy_agent._respond_from_intent(
+                candidate.to_legacy(),
+                message,
+                history,
+                session_id,
+                session,
+                relaxed_fields,
+            )
+
+        relaxations: list[dict[str, Any]] = []
+        if (
+            self.settings.max_replan_steps > 0
+            and validated_intent.intent in RETRIEVAL_INTENTS
+            and result_count(response) == 0
+        ):
+            replanned_intent, replanned_response, steps = await asyncio.to_thread(
+                replan_until_results,
+                validated_intent,
+                execute,
+                max_steps=self.settings.max_replan_steps,
+                initial_response=response,
+            )
+            if steps:
+                relaxations = [step.as_dict() for step in steps]
+                # Only adopt a relaxed plan that actually recovered candidates.
+                if result_count(replanned_response) > 0:
+                    validated_intent = replanned_intent
+                    legacy_intent = replanned_intent.to_legacy()
+                    response = replanned_response
+                provider_attempts.append(
+                    {
+                        "phase": "replan",
+                        "provider": "backend",
+                        "outcome": "recovered" if result_count(response) > 0 else "exhausted",
+                        "steps": len(steps),
+                    }
+                )
+        if relaxations:
+            response["relaxations"] = relaxations
         try:
             calls = self.tool_registry.validate_trace(
                 validated_intent,
