@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import csv
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
-from anime_agent.agent import AnimeAgent  # noqa: E402
-from anime_agent.data_pipeline import (  # noqa: E402
+from backend.anime_agent.agent import AnimeAgent  # noqa: E402
+from backend.anime_agent.data_pipeline import (  # noqa: E402
     build_catalog,
     clean_label,
     metadata_token,
@@ -19,9 +17,9 @@ from anime_agent.data_pipeline import (  # noqa: E402
     selected_staff_role,
     write_catalog,
 )
-from anime_agent.entities import EntityResolver  # noqa: E402
-from anime_agent.recommender import AnimeRecommender, creator_roles, series_key  # noqa: E402
-from anime_agent.server import SessionStore, merge_profiles  # noqa: E402
+from backend.anime_agent.entities import EntityResolver  # noqa: E402
+from backend.anime_agent.recommender import AnimeRecommender, creator_roles, series_key  # noqa: E402
+from backend.anime_agent.server import SessionStore, merge_profiles  # noqa: E402
 
 CATALOG = [
     {

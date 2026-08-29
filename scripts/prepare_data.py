@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
-from anime_agent.archive_pipeline import build_archive_catalog, find_archive_dir  # noqa: E402
-from anime_agent.data_pipeline import build_catalog, find_raw_dir, write_catalog  # noqa: E402
+from backend.anime_agent.archive_pipeline import build_archive_catalog, find_archive_dir  # noqa: E402
+from backend.anime_agent.data_pipeline import build_catalog, find_raw_dir, write_catalog  # noqa: E402
 
 
 def main() -> None:

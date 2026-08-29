@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
-import sys
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -11,8 +10,6 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
 from app.core.config import Settings  # noqa: E402
 from app.embeddings.index import SemanticEmbeddingIndex  # noqa: E402

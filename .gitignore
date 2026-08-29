@@ -10,6 +10,10 @@ venv/
 .coverage
 coverage.xml
 .test-tmp*
+.pytest_tmp/
+*.egg-info/
+build/
+dist/
 .env
 server.log
 server.err.log
@@ -39,6 +43,9 @@ data/processed/*.npz
 # but too large for source control. Reports under results/ stay reviewable.
 data/evaluation/personalized/splits/
 data/evaluation/personalized/artifacts/
+# Sweep candidates write their model artifacts beside their reports; keep the
+# reports, drop the weights (76 MB of reproducible .npz).
+data/evaluation/personalized/results/**/artifacts/
 
 # Local OS/editor files.
 .DS_Store

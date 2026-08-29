@@ -1,4 +1,5 @@
 -r requirements.txt
+-r requirements-evaluation.txt
 coverage[toml]>=7.10,<8
 mypy>=1.17,<2
 pytest>=8.4,<9

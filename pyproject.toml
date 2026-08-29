@@ -1,5 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anime-compass"
+version = "0.1.0"
+description = "Local-first agentic anime discovery with an explainable hybrid recommender."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "fastapi>=0.116,<1",
+    "httpx>=0.28,<1",
+    "numpy>=1.26,<3",
+    "pydantic>=2.11,<3",
+    "pydantic-settings>=2.10,<3",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=5.0,<6"]
+evaluation = ["scipy>=1.11,<2"]
+dev = [
+    "coverage[toml]>=7.10,<8",
+    "mypy>=1.17,<2",
+    "pytest>=8.4,<9",
+    "pytest-asyncio>=1.1,<2",
+    "pytest-cov>=6.2,<7",
+    "ruff>=0.12,<1",
+]
+
+[project.scripts]
+anime-compass = "run_app:main"
+
+[tool.setuptools]
+py-modules = ["run_app"]
+
+[tool.setuptools.packages.find]
+include = ["app*", "backend*", "scripts*"]
+exclude = ["tests*", "data*", "docs*", "archive*", "frontend*"]
+
 [tool.pytest.ini_options]
-addopts = "--strict-markers"
+# A writable basetemp keeps the suite runnable where %TEMP% is restricted.
+addopts = "--strict-markers --basetemp=.pytest_tmp"
 testpaths = ["tests"]
 
 [tool.coverage.run]
@@ -27,7 +71,6 @@ ignore = ["E501", "UP017"]
 python_version = "3.12"
 check_untyped_defs = true
 ignore_missing_imports = true
-follow_imports = "skip"
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true

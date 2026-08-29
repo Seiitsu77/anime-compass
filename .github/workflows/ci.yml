@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -15,10 +18,14 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt
+      # Install the project so `app`, `backend`, and `scripts` resolve as real
+      # packages rather than depending on the current working directory.
+      - run: python -m pip install -e . --no-deps
       - run: python -m compileall -q app backend scripts tests run_app.py
       - run: python -m ruff check app backend scripts tests run_app.py
       - run: python -m ruff format --check app backend scripts tests run_app.py
-      - run: python -m mypy app scripts
+      # The domain layer under backend/ is type-checked alongside the web layer.
+      - run: python -m mypy app backend scripts
       - run: python -m pytest --cov --cov-report=term-missing --cov-report=xml
       - uses: actions/setup-node@v4
         with:

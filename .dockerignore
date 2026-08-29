@@ -1,14 +1,39 @@
+# Version control and CI
 .git
 .github
+.gitattributes
+
+# Secrets and local environments
 .env
 .venv
 venv
+.lightfm-env
+.tools
+
+# Python caches
 __pycache__
 *.py[cod]
 .pytest_cache
 .ruff_cache
 .mypy_cache
+.pytest_tmp
+.test-tmp*
+.coverage
+coverage.xml
+
+# Logs
 *.log
+
+# Tests and docs are not needed in the runtime image
 tests
+docs
+
+# Raw and intermediate datasets. Runtime artifacts are downloaded at startup
+# and verified against data/artifacts.manifest.json, so they must not be baked
+# into the build context (archive/ alone is ~2.7 GB).
+archive
 Anime Data
 data/raw
+data/processed
+data/evaluation
+data/*.db
