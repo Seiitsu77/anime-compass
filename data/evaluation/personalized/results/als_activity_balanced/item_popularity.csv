@@ -1,0 +1,7 @@
+model,bucket,users,heldout_items,recall_at_10,ndcg_at_10,recommendation_exposure
+countsketch_cf,head,298,1352,0.19357198279851592,0.15815563884790088,0.9665
+countsketch_cf,mid_tail,27,45,0.0,0.0,0.028833333333333332
+countsketch_cf,long_tail,2,2,0.0,0.0,0.004666666666666667
+als,head,298,1352,0.29014399502976856,0.2358311431490197,1.0
+als,mid_tail,27,45,0.0,0.0,0.0
+als,long_tail,2,2,0.0,0.0,0.0

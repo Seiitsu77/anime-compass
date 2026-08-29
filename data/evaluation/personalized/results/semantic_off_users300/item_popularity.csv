@@ -1,0 +1,10 @@
+model,bucket,users,heldout_items,recall_at_10,ndcg_at_10,recommendation_exposure
+popularity,head,300,2946,0.08712375430243863,0.10620735063477138,1.0
+popularity,mid_tail,41,83,0.0,0.0,0.0
+popularity,long_tail,0,0,0.0,0.0,0.0
+countsketch_cf,head,300,2946,0.1555821905243955,0.1557044567086057,0.9965
+countsketch_cf,mid_tail,41,83,0.0,0.0,0.0035
+countsketch_cf,long_tail,0,0,0.0,0.0,0.0
+current_hybrid,head,300,2946,0.1903913456240134,0.19553289610750052,0.9965
+current_hybrid,mid_tail,41,83,0.0,0.0,0.0026666666666666666
+current_hybrid,long_tail,0,0,0.0,0.0,0.0008333333333333334

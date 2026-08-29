@@ -1,0 +1,10 @@
+[
+  {"name": "als_f32_r05_a40",  "factors": 32,  "iterations": 15, "regularization": 0.05, "alpha": 40.0},
+  {"name": "als_f64_r05_a40",  "factors": 64,  "iterations": 15, "regularization": 0.05, "alpha": 40.0},
+  {"name": "als_f128_r05_a40", "factors": 128, "iterations": 15, "regularization": 0.05, "alpha": 40.0},
+  {"name": "als_f64_r01_a40",  "factors": 64,  "iterations": 15, "regularization": 0.01, "alpha": 40.0},
+  {"name": "als_f64_r20_a40",  "factors": 64,  "iterations": 15, "regularization": 0.20, "alpha": 40.0},
+  {"name": "als_f64_r05_a10",  "factors": 64,  "iterations": 15, "regularization": 0.05, "alpha": 10.0},
+  {"name": "als_f64_r05_a100", "factors": 64,  "iterations": 15, "regularization": 0.05, "alpha": 100.0},
+  {"name": "als_f64_r05_a40_i30", "factors": 64, "iterations": 30, "regularization": 0.05, "alpha": 40.0}
+]

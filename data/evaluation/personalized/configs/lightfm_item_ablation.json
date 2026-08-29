@@ -1,0 +1,29 @@
+[
+  {
+    "name": "lightfm_id"
+  },
+  {
+    "name": "lightfm_item_genres",
+    "item_fields": ["genres"]
+  },
+  {
+    "name": "lightfm_item_genres_type",
+    "item_fields": ["genres", "type"]
+  },
+  {
+    "name": "lightfm_item_genres_type_source",
+    "item_fields": ["genres", "type", "source"]
+  },
+  {
+    "name": "lightfm_item_genres_type_source_decade",
+    "item_fields": ["genres", "type", "source", "decade"]
+  },
+  {
+    "name": "lightfm_item_genres_type_source_decade_rating",
+    "item_fields": ["genres", "type", "source", "decade", "content_rating"]
+  },
+  {
+    "name": "lightfm_item_full",
+    "item_fields": ["genres", "type", "source", "decade", "content_rating", "studios"]
+  }
+]

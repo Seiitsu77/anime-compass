@@ -41,9 +41,22 @@ pipeline measures per-user ranking on held-out positive ratings.
 4. `lightfm_id`: LightFM with user identity, anime identity, and positive training interactions only.
 5. `lightfm_hybrid`: LightFM identity features plus sparse, static catalog genre, type, source, frequency-filtered
    studio, decade, and content-rating features. Outcome-derived fields and high-cardinality people data are excluded.
+6. `item_item_cosine`: exact adjusted-cosine item similarity over the same user-centred residuals CountSketch
+   uses, computed blockwise so the full 18k-by-18k matrix is never materialised, with the top 200 neighbours per
+   item retained. This is the reference that isolates what the CountSketch projection costs, because the only
+   difference between the two is the random projection.
+7. `als`: implicit-feedback alternating least squares (Hu, Koren, and Volinsky, 2008) with the conjugate-gradient
+   solver (Takács et al., 2011), trained on train positives only. Item factors are exported; a user vector is
+   recomputed at request time by folding their positives into item space, so the model generalises to users absent
+   from training.
+8. `current_hybrid_learned`: the production hybrid with channel weights fitted from held-out data instead of
+   hand-set, via `scripts/train_fusion_weights.py`. Requires `--fusion-weights`.
 
 LightFM is an offline-only training dependency. Exported user/item representations and biases are validated and
-served with NumPy; the FastAPI runtime does not import LightFM. LightGCN is not implemented.
+served with NumPy; the FastAPI runtime does not import LightFM. The item-item and ALS baselines need only NumPy
+and SciPy sparse (`requirements-evaluation.txt`) and add no compiled dependency. LightGCN is not implemented; see
+the [collaborative baselines decision report](results/collaborative_baselines_summary.md) for why a graph model is
+not the next step.
 
 ## LightFM challenger results
 

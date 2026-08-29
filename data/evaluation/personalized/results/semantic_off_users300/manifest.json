@@ -1,0 +1,163 @@
+{
+  "experiment": {
+    "catalog_sha256": "2ef54a712f63eec2adc33f21bd431fc66ab097ba135ab440fd3d773f84668c75",
+    "dataset_sha256": "b60519348a90bd5e02c25355b374f7ca055a0637a237f0e163447953b13ffaa0",
+    "environment": {
+      "logical_cpu_count": 24,
+      "numpy": "2.2.6",
+      "peak_process_rss_bytes": 1402408960,
+      "platform": "Windows-10-10.0.26200-SP0",
+      "processor": "Intel64 Family 6 Model 198 Stepping 2, GenuineIntel",
+      "python": "3.10.0"
+    },
+    "evaluated_users": 300,
+    "positive_threshold": 8,
+    "run_config": {
+      "als_alpha": 40.0,
+      "als_factors": 64,
+      "als_iterations": 15,
+      "als_regularization": 0.05,
+      "bootstrap_iterations": 2000,
+      "countsketch_projections": 3,
+      "countsketch_width": 128,
+      "force_model_rebuild": false,
+      "fusion_weights_path": null,
+      "item_item_neighbors": 200,
+      "lightfm_penalties": [],
+      "max_evaluation_users": 300,
+      "model_names": [
+        "popularity",
+        "countsketch_cf",
+        "current_hybrid"
+      ],
+      "progress_every": 100,
+      "recommendation_k": 20,
+      "sample_seed": 42,
+      "sampling_strategy": "uniform",
+      "semantic_artifact_path": ".",
+      "users_per_stratum": null
+    },
+    "split_seed": 42,
+    "split_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038"
+  },
+  "generated_at": "2026-08-28T18:19:31.408592+00:00",
+  "models": [
+    {
+      "artifact": {
+        "files": [
+          "popularity_train_only.npz"
+        ],
+        "sha256": "d1ffeecb9eba3fa456dc71fa5e3f6f00cc4cc2dd2d92336cebb88263ecd82a92",
+        "size_bytes": 57523
+      },
+      "hyperparameters": {
+        "signal": "positive training interaction count",
+        "tie_breaker": "anime_id"
+      },
+      "name": "popularity",
+      "offline_peak_process_rss_bytes": null,
+      "offline_training_duration_seconds": 19.67206739995163,
+      "selected_fit_or_build_duration_seconds": 19.67206739995163,
+      "training_or_build_duration_seconds": 19.67206739995163,
+      "version": "train-positive-count-v1"
+    },
+    {
+      "artifact": {
+        "files": [
+          "countsketch_train_only.npz"
+        ],
+        "sha256": "8eed258b731ff0efd7957a67146faa0116003f293872b4e70854c99a35fdaf91",
+        "size_bytes": 14967050
+      },
+      "hyperparameters": {
+        "dimensions": 384,
+        "method": "user-centred CountSketch item similarity",
+        "profile_feedback": "positive training interactions",
+        "training_feedback": "all observed train ratings, classes kept distinct"
+      },
+      "name": "countsketch_cf",
+      "offline_peak_process_rss_bytes": 785932288,
+      "offline_training_duration_seconds": 65.769123,
+      "selected_fit_or_build_duration_seconds": 65.769123,
+      "training_or_build_duration_seconds": 65.769123,
+      "version": "user-centred-countsketch-v1"
+    },
+    {
+      "artifact": {
+        "files": [
+          "countsketch_train_only.npz",
+          "anime_catalog.json"
+        ],
+        "sha256": "a196da930e9f7e13a5fcdd3a87922b10004193e5c35016f4e7984f9bbc128f99",
+        "size_bytes": 134338587
+      },
+      "hyperparameters": {
+        "candidate_catalog": "full catalog minus exact training-known IDs",
+        "catalog_aggregate_fields": "rating-derived fields rebuilt or cleared from training data",
+        "diversity_strength": 0.12,
+        "llm_used": false,
+        "profile_feedback": "positive training interactions",
+        "ranking_only": true,
+        "semantic_embedding_available": false,
+        "weight_source": "hand_set",
+        "weights": {
+          "collaborative": 0.22,
+          "creator": 0.05,
+          "dense": 0.08,
+          "lsa": 0.04,
+          "metadata": 0.16,
+          "novelty": 0.03,
+          "quality": 0.13,
+          "semantic_embedding": 0.14,
+          "session": 0.05,
+          "synopsis": 0.1
+        }
+      },
+      "name": "current_hybrid",
+      "offline_peak_process_rss_bytes": null,
+      "offline_training_duration_seconds": 90.47890220002769,
+      "selected_fit_or_build_duration_seconds": 5.0377118000760674,
+      "training_or_build_duration_seconds": 5.0377118000760674,
+      "version": "hybrid-collaborative-v4"
+    }
+  ],
+  "outputs": {
+    "engineering.csv": {
+      "sha256": "01572519c56378aca16215073eb0a6c08aab8953b4a674350228ed34b8e60824",
+      "size_bytes": 975
+    },
+    "item_popularity.csv": {
+      "sha256": "7aa5ee28fed501f3abdad58f19a514c26765180bdcd6b9e7795bf7eb194bb7b2",
+      "size_bytes": 579
+    },
+    "paired_bootstrap.csv": {
+      "sha256": "2411dfb96c13be44fb21ed4aab0060298f74fc21a7dff2030cdebde5ed9524f3",
+      "size_bytes": 933
+    },
+    "per_user_metrics.csv.gz": {
+      "sha256": "51a2c028a1e88f21db12e603158319c26c56d3227802458d8b47199f18726e06",
+      "size_bytes": 25689
+    },
+    "popularity_concentration.csv": {
+      "sha256": "869a6ff9f58aba07dc3e419017bb3da09e45dd1d76c2695030b96d0137339e74",
+      "size_bytes": 1034
+    },
+    "report.md": {
+      "sha256": "960c7844895b21d1198e7d381554ff4755fb5fa64c32d7e033f82a02a74a0110",
+      "size_bytes": 8435
+    },
+    "results.json": {
+      "sha256": "c744c57add75ea9a88d70416ba97050691d42ddb9101260e65390b10120af418",
+      "size_bytes": 20951
+    },
+    "summary.csv": {
+      "sha256": "b832988a0ec59867659cba43aabb5b2673661a2f681b5d21b4ba6e97117dd52b",
+      "size_bytes": 770
+    },
+    "user_segments.csv": {
+      "sha256": "5d66747cbb6b828b8e149ff8ef3e98f7fbee7dabdbe369278bf984a143475c7b",
+      "size_bytes": 692
+    }
+  },
+  "schema_version": 1
+}

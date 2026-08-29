@@ -1,0 +1,3 @@
+left_model,right_model,metric,users,iterations,seed,difference,relative_difference,ci_lower,ci_upper,ci_excludes_zero
+als,countsketch_cf,ndcg_at_10,300,2000,20260901,0.0776909319126116,0.49878759232374725,0.04837748510075788,0.10576564658368527,True
+als,countsketch_cf,recall_at_10,300,2000,20260901,0.0958446826374437,0.5057015417281021,0.056730026982676374,0.13481872387097282,True

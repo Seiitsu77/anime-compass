@@ -1,0 +1,7 @@
+model,bucket,users,heldout_items,recall_at_10,ndcg_at_10,recommendation_exposure
+current_hybrid,head,799,8504,0.1894779176854961,0.20057625413735988,0.995625
+current_hybrid,mid_tail,126,475,0.007986423080762703,0.004000321271212326,0.003625
+current_hybrid,long_tail,4,14,0.0,0.0,0.00075
+current_hybrid_learned,head,799,8504,0.16273707748322733,0.18186593043553761,0.981375
+current_hybrid_learned,mid_tail,126,475,0.009623639812319057,0.00672741336399949,0.0140625
+current_hybrid_learned,long_tail,4,14,0.0,0.0,0.0045625

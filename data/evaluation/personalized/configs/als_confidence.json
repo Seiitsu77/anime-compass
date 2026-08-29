@@ -1,0 +1,6 @@
+[
+  {"name": "als_conf_binary", "factors": 128, "iterations": 15, "regularization": 0.05, "alpha": 5.0, "confidence_mapping": "binary"},
+  {"name": "als_conf_linear", "factors": 128, "iterations": 15, "regularization": 0.05, "alpha": 5.0, "confidence_mapping": "linear"},
+  {"name": "als_conf_sqrt",   "factors": 128, "iterations": 15, "regularization": 0.05, "alpha": 5.0, "confidence_mapping": "sqrt"},
+  {"name": "als_conf_log",    "factors": 128, "iterations": 15, "regularization": 0.05, "alpha": 5.0, "confidence_mapping": "log"}
+]

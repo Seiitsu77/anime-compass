@@ -1,0 +1,6 @@
+[
+  {"name": "als_f64_r05_a1",   "factors": 64,  "iterations": 15, "regularization": 0.05, "alpha": 1.0},
+  {"name": "als_f64_r05_a25",  "factors": 64,  "iterations": 15, "regularization": 0.05, "alpha": 2.5},
+  {"name": "als_f64_r05_a5",   "factors": 64,  "iterations": 15, "regularization": 0.05, "alpha": 5.0},
+  {"name": "als_f128_r05_a5",  "factors": 128, "iterations": 15, "regularization": 0.05, "alpha": 5.0}
+]

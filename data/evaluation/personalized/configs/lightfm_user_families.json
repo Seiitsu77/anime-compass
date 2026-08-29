@@ -1,0 +1,20 @@
+[
+  {
+    "name": "lightfm_id"
+  },
+  {
+    "name": "lightfm_item_full",
+    "item_fields": ["genres", "type", "source", "decade", "content_rating", "studios"]
+  },
+  {
+    "name": "lightfm_user_hybrid",
+    "user_fields": ["genres", "type", "source", "decade", "content_rating", "studios"],
+    "user_preference_mass": 0.5
+  },
+  {
+    "name": "lightfm_user_item_hybrid",
+    "item_fields": ["genres", "type", "source", "decade", "content_rating", "studios"],
+    "user_fields": ["genres", "type", "source", "decade", "content_rating", "studios"],
+    "user_preference_mass": 0.5
+  }
+]

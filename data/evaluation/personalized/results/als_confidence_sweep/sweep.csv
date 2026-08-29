@@ -1,0 +1,5 @@
+name,factors,iterations,regularization,alpha,confidence_mapping,train_seconds,validation_users,ndcg_at_10,recall_at_10,hit_rate_at_10,catalog_coverage,mean_novelty,popularity_bias
+als_conf_binary,128,15,0.05,5.0,binary,346.96,800,0.290361,0.272141,0.80375,0.076395,10.07585,0.028395
+als_conf_linear,128,15,0.05,5.0,linear,400.35,800,0.286342,0.267192,0.78875,0.078997,10.046873,0.030106
+als_conf_sqrt,128,15,0.05,5.0,sqrt,401.45,800,0.288831,0.268371,0.79875,0.077558,10.071991,0.028623
+als_conf_log,128,15,0.05,5.0,log,402.28,800,0.289042,0.270112,0.795,0.077834,10.066058,0.028973
