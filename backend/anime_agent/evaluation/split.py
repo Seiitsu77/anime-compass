@@ -7,7 +7,7 @@ import sqlite3
 import struct
 import time
 import zlib
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -691,6 +691,7 @@ def select_evaluation_user_ids(
     strategy: str = "uniform",
     users_per_stratum: int | None = None,
     bucket_by_id: Mapping[int, str] | None = None,
+    excluded_user_ids: Collection[int] | None = None,
 ) -> list[int]:
     """Backward-compatible ID-only wrapper around ``select_evaluation_sample``."""
     return list(
@@ -701,6 +702,7 @@ def select_evaluation_user_ids(
             strategy=strategy,
             users_per_stratum=users_per_stratum,
             bucket_by_id=bucket_by_id,
+            excluded_user_ids=excluded_user_ids,
         ).user_ids
     )
 
@@ -713,6 +715,7 @@ def select_evaluation_sample(
     strategy: str = "uniform",
     users_per_stratum: int | None = None,
     bucket_by_id: Mapping[int, str] | None = None,
+    excluded_user_ids: Collection[int] | None = None,
 ) -> EvaluationSample:
     """Select one deterministic evaluation population for every model.
 
@@ -721,6 +724,11 @@ def select_evaluation_sample(
     unweighted aggregate metrics must not be interpreted as population means.
     The popularity diagnostic uses test relevance only to choose diagnostic
     users; item buckets themselves are supplied from train-only statistics.
+
+    ``excluded_user_ids`` removes users from the eligible pool before sampling.
+    It exists so a confirmation run can be drawn from users no earlier
+    experiment has looked at, which is what makes a held-out claim honest after
+    a sequence of exploratory runs.
     """
     aliases = {"stratified": "activity_stratified"}
     strategy = aliases.get(strategy, strategy)
@@ -730,6 +738,11 @@ def select_evaluation_sample(
     if users_per_stratum is not None and users_per_stratum < 1:
         raise ValueError("users_per_stratum must be positive when provided")
     activity = store.eligible_user_activity()
+    if excluded_user_ids:
+        blocked = {int(value) for value in excluded_user_ids}
+        activity = [(user_id, count) for user_id, count in activity if user_id not in blocked]
+        if not activity:
+            raise ValueError("Every eligible user was excluded; no sample can be drawn")
     eligible_ids = [user_id for user_id, _count in activity]
 
     def sample_key(user_id: int) -> tuple[bytes, int]:
@@ -768,18 +781,18 @@ def select_evaluation_sample(
             targets = {
                 segment: base + int(index < remainder) for index, segment in enumerate(("sparse", "medium", "heavy"))
             }
-        selected: set[int] = set()
+        sampled: set[int] = set()
         for segment in ("sparse", "medium", "heavy"):
-            selected.update(sorted(groups[segment], key=sample_key)[: targets[segment]])
+            sampled.update(sorted(groups[segment], key=sample_key)[: targets[segment]])
         return EvaluationSample(
-            user_ids=tuple(sorted(selected)),
+            user_ids=tuple(sorted(sampled)),
             strategy="activity_stratified",
             diagnostic=True,
             requested_total=None if users_per_stratum is not None else limit,
             requested_per_stratum=users_per_stratum,
             stratum_population_counts={segment: len(values) for segment, values in groups.items()},
             stratum_selected_counts={
-                segment: sum(user_id in selected for user_id in values) for segment, values in groups.items()
+                segment: sum(user_id in sampled for user_id in values) for segment, values in groups.items()
             },
             selection_target="training-positive activity segment",
         )
@@ -805,31 +818,31 @@ def select_evaluation_sample(
         targets = {
             bucket: base + int(index < remainder) for index, bucket in enumerate(("head", "mid_tail", "long_tail"))
         }
-    selected = set()
+    chosen: set[int] = set()
     # Start with the rarest target so broadly qualifying head users cannot
     # crowd out the diagnostic's scarce long-tail population.
     for bucket in ("long_tail", "mid_tail", "head"):
-        already_qualified = sum(user_id in selected for user_id in popularity_groups[bucket])
+        already_qualified = sum(user_id in chosen for user_id in popularity_groups[bucket])
         needed = max(0, targets[bucket] - already_qualified)
 
-        def bucket_key(user_id: int, *, _bucket: str = bucket) -> tuple[bytes, int]:
+        def bucket_key(user_id: int, *, _bucket: str = str(bucket)) -> tuple[bytes, int]:
             digest = hashlib.blake2b(
                 f"sample:{seed}:popularity:{_bucket}:{user_id}".encode(),
                 digest_size=8,
             ).digest()
             return digest, user_id
 
-        candidates = (user_id for user_id in popularity_groups[bucket] if user_id not in selected)
-        selected.update(sorted(candidates, key=bucket_key)[:needed])
+        candidates = (user_id for user_id in popularity_groups[bucket] if user_id not in chosen)
+        chosen.update(sorted(candidates, key=bucket_key)[:needed])
     return EvaluationSample(
-        user_ids=tuple(sorted(selected)),
+        user_ids=tuple(sorted(chosen)),
         strategy="popularity_stratified",
         diagnostic=True,
         requested_total=None if users_per_stratum is not None else limit,
         requested_per_stratum=users_per_stratum,
         stratum_population_counts={bucket: len(values) for bucket, values in popularity_groups.items()},
         stratum_selected_counts={
-            bucket: sum(user_id in selected for user_id in values) for bucket, values in popularity_groups.items()
+            bucket: sum(user_id in chosen for user_id in values) for bucket, values in popularity_groups.items()
         },
         selection_target="test-positive item popularity bucket; buckets computed from training positives only",
     )

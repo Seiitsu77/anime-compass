@@ -8,6 +8,7 @@ from statistics import mean
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 
 @dataclass(frozen=True)
@@ -188,6 +189,86 @@ def normalized_log_popularity(anime_id: int, train_positive_counts: Mapping[int,
     return math.log1p(int(train_positive_counts.get(int(anime_id), 0))) / math.log1p(maximum)
 
 
+def gini_coefficient(values: Sequence[int | float]) -> float:
+    """Return the Gini concentration of non-negative values.
+
+    A value of zero means equal exposure. Values approach one as exposure is
+    concentrated in fewer entries. Recommendation diagnostics should include
+    every catalog item, including items with zero exposure.
+    """
+    array = np.asarray(values, dtype=np.float64)
+    if array.ndim != 1:
+        raise ValueError("Gini values must be one-dimensional")
+    if not np.isfinite(array).all() or np.any(array < 0.0):
+        raise ValueError("Gini values must be finite and non-negative")
+    if not len(array) or float(array.sum()) <= 0.0:
+        return 0.0
+    ordered = np.sort(array)
+    indexes: npt.NDArray[Any] = np.arange(1, len(ordered) + 1, dtype=np.float64)
+    numerator = float(np.sum((2.0 * indexes - len(ordered) - 1.0) * ordered))
+    return float(numerator / (len(ordered) * ordered.sum()))
+
+
+def recommendation_popularity_concentration(
+    exposure_by_item: Mapping[int, int],
+    catalog_ids: Iterable[int],
+    train_positive_counts: Mapping[int, int],
+) -> dict[str, float | int]:
+    """Summarize top-popularity exposure and catalog concentration.
+
+    Both the popularity ordering and average popularity use positive training
+    interactions only. Anime ID is the deterministic popularity tie-breaker.
+    The Gini denominator includes the full candidate catalog.
+    """
+    ordered_catalog = sorted(
+        {int(anime_id) for anime_id in catalog_ids},
+        key=lambda anime_id: (-int(train_positive_counts.get(anime_id, 0)), anime_id),
+    )
+    if not ordered_catalog:
+        return {
+            "top_1_percent_share": 0.0,
+            "top_5_percent_share": 0.0,
+            "top_10_percent_share": 0.0,
+            "top_20_percent_share": 0.0,
+            "unique_recommended_items": 0,
+            "exposure_gini": 0.0,
+            "catalog_coverage": 0.0,
+            "average_training_popularity_count": 0.0,
+            "average_normalized_log_popularity": 0.0,
+            "recommendation_events": 0,
+        }
+    exposures = np.asarray(
+        [max(0, int(exposure_by_item.get(anime_id, 0))) for anime_id in ordered_catalog],
+        dtype=np.int64,
+    )
+    total = int(exposures.sum())
+    unique = int(np.count_nonzero(exposures))
+    result: dict[str, float | int] = {
+        "unique_recommended_items": unique,
+        "exposure_gini": gini_coefficient(exposures.tolist()),
+        "catalog_coverage": unique / len(ordered_catalog),
+        "recommendation_events": total,
+    }
+    for percentage in (1, 5, 10, 20):
+        cutoff = max(1, math.ceil(len(ordered_catalog) * percentage / 100.0))
+        result[f"top_{percentage}_percent_share"] = float(exposures[:cutoff].sum()) / total if total else 0.0
+    if total:
+        raw_popularity = np.asarray(
+            [int(train_positive_counts.get(anime_id, 0)) for anime_id in ordered_catalog],
+            dtype=np.float64,
+        )
+        normalized_popularity = np.asarray(
+            [normalized_log_popularity(anime_id, train_positive_counts) for anime_id in ordered_catalog],
+            dtype=np.float64,
+        )
+        result["average_training_popularity_count"] = float(np.dot(exposures, raw_popularity) / total)
+        result["average_normalized_log_popularity"] = float(np.dot(exposures, normalized_popularity) / total)
+    else:
+        result["average_training_popularity_count"] = 0.0
+        result["average_normalized_log_popularity"] = 0.0
+    return result
+
+
 def popularity_bias(
     recommendations: Sequence[Sequence[int]],
     training_histories: Sequence[Sequence[int]],
@@ -324,7 +405,7 @@ def paired_bootstrap_aligned(
     if not np.isfinite(differences).all():
         raise ValueError("paired bootstrap differences must be finite")
     generator = np.random.default_rng(seed)
-    bootstrap_means = np.empty(iterations, dtype=np.float64)
+    bootstrap_means: npt.NDArray[Any] = np.empty(iterations, dtype=np.float64)
     # Cap the temporary integer index matrix at roughly two million cells.
     # This remains bounded even for a full 300k-user evaluation.
     batch_size = min(256, iterations, max(1, 2_000_000 // len(differences)))

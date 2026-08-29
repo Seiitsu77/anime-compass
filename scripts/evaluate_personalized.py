@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.anime_agent.evaluation.runner import (  # noqa: E402
     EvaluationRunConfig,
@@ -26,6 +23,18 @@ from backend.anime_agent.evaluation.split import (  # noqa: E402
 DEFAULT_RATINGS = PROJECT_ROOT / "archive" / "rating_complete.csv"
 DEFAULT_CATALOG = PROJECT_ROOT / "data" / "processed" / "anime_catalog.json"
 DEFAULT_EVALUATION_ROOT = PROJECT_ROOT / "data" / "evaluation" / "personalized"
+
+
+def _read_user_ids(path: Path | None) -> tuple[int, ...]:
+    """Load a newline-delimited user ID list, ignoring blanks and comments."""
+    if path is None:
+        return ()
+    values: list[int] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            values.append(int(stripped))
+    return tuple(sorted(set(values)))
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,15 +77,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         default="popularity,countsketch_cf,current_hybrid",
-        help=(
-            "Comma-separated models: popularity,countsketch_cf,current_hybrid,lightfm_id,lightfm_hybrid. "
-            "Use the four collaborative models for the LightFM comparison."
-        ),
+        help=("Comma-separated built-ins or LightFM aliases matching lightfm_[a-z0-9_]+."),
     )
     parser.add_argument(
         "--lightfm-artifacts-dir",
         type=Path,
         help="Directory containing lightfm_id.npz and lightfm_hybrid.npz (default: <artifacts-dir>/lightfm).",
+    )
+    parser.add_argument(
+        "--lightfm-artifact",
+        action="append",
+        default=[],
+        metavar="MODEL=PATH",
+        help="Override an artifact path for a LightFM model alias; repeat as needed.",
+    )
+    parser.add_argument(
+        "--lightfm-penalty",
+        action="append",
+        default=[],
+        metavar="MODEL=LAMBDA",
+        help="Apply a train-only normalized-log popularity penalty to a LightFM alias.",
     )
     parser.add_argument("--positive-threshold", type=int, default=8)
     parser.add_argument("--neutral-min", type=int, default=6)
@@ -98,6 +118,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bootstrap-iterations", type=int, default=2_000)
     parser.add_argument("--countsketch-projections", type=int, default=3)
     parser.add_argument("--countsketch-width", type=int, default=128)
+    parser.add_argument(
+        "--item-item-neighbors",
+        type=int,
+        default=200,
+        help="Neighbours retained per item by the exact item-item baseline.",
+    )
+    parser.add_argument("--als-factors", type=int, default=64)
+    parser.add_argument("--als-iterations", type=int, default=15)
+    parser.add_argument("--als-regularization", type=float, default=0.05)
+    parser.add_argument("--als-alpha", type=float, default=40.0)
+    parser.add_argument(
+        "--exclude-user-ids",
+        type=Path,
+        help="Newline-delimited user IDs to remove from the eligible pool before sampling.",
+    )
+    parser.add_argument(
+        "--semantic-artifact",
+        type=Path,
+        default=PROJECT_ROOT / "data" / "processed" / "semantic_embeddings.npz",
+        help="Optional semantic embedding artifact for the hybrid models.",
+    )
+    parser.add_argument(
+        "--fusion-weights",
+        type=Path,
+        help="Learned channel weights JSON, required by the current_hybrid_learned model.",
+    )
     parser.add_argument("--progress-every", type=int, default=25)
     parser.add_argument("--force-split", action="store_true")
     parser.add_argument("--force-model-rebuild", action="store_true")
@@ -148,6 +194,21 @@ def _print_summary(result: dict[str, Any]) -> None:
         )
 
 
+def _parse_assignments(values: list[str], *, numeric: bool = False) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"Expected MODEL=VALUE, received {value!r}")
+        name, assigned = value.split("=", 1)
+        name = name.strip()
+        if not name.startswith("lightfm_") or not assigned.strip():
+            raise ValueError(f"Invalid LightFM assignment: {value!r}")
+        if name in result:
+            raise ValueError(f"Duplicate LightFM assignment for {name}")
+        result[name] = float(assigned) if numeric else Path(assigned)
+    return result
+
+
 def main() -> None:
     args = parse_args()
     if args.refresh_output is not None:
@@ -181,6 +242,25 @@ def main() -> None:
         if progress is not None:
             progress(f"split: reusing {split_path}")
     else:
+        # An existing split that does not match the requested configuration is
+        # almost always a caller mistake -- passing --split without the matching
+        # --positive-threshold, for example. Silently rebuilding destroys the
+        # artifact and orphans every model trained against it, so refuse unless
+        # the caller explicitly asked to rebuild.
+        if split_path.exists() and not args.force_split:
+            existing = SplitStore(split_path).metadata()
+            existing_feedback = existing.get("split_config", {}).get("feedback", {})
+            details = [
+                "Refusing to overwrite an existing split that does not match the requested settings.",
+                f"  path                : {split_path}",
+                f"  existing threshold  : {existing_feedback.get('positive_threshold')}",
+                f"  requested threshold : {split_config.feedback.positive_threshold}",
+                f"  existing seed       : {existing.get('split_config', {}).get('seed')}",
+                f"  requested seed      : {split_config.seed}",
+                "Pass matching settings, choose a different --split path, or pass "
+                "--force-split to rebuild deliberately.",
+            ]
+            raise SystemExit("\n".join(details))
         if progress is not None:
             progress(f"split: building {split_path}")
         build_split_store(
@@ -198,19 +278,37 @@ def main() -> None:
         print(json.dumps(metadata, indent=2, sort_keys=True))
         return
 
+    model_names = tuple(value.strip() for value in args.models.split(",") if value.strip())
+    artifact_overrides = _parse_assignments(args.lightfm_artifact)
+    penalty_overrides = _parse_assignments(args.lightfm_penalty, numeric=True)
     run_config = EvaluationRunConfig(
         sample_seed=args.sample_seed,
         sampling_strategy=args.sampling_strategy,
         max_evaluation_users=args.max_evaluation_users,
         users_per_stratum=args.users_per_stratum,
-        model_names=tuple(value.strip() for value in args.models.split(",") if value.strip()),
+        model_names=model_names,
         recommendation_k=args.recommendation_k,
         bootstrap_iterations=args.bootstrap_iterations,
         countsketch_projections=args.countsketch_projections,
         countsketch_width=args.countsketch_width,
+        item_item_neighbors=args.item_item_neighbors,
+        fusion_weights_path=str(args.fusion_weights) if args.fusion_weights else None,
+        semantic_artifact_path=str(args.semantic_artifact) if args.semantic_artifact else None,
+        excluded_user_ids=_read_user_ids(args.exclude_user_ids),
+        als_factors=args.als_factors,
+        als_iterations=args.als_iterations,
+        als_regularization=args.als_regularization,
+        als_alpha=args.als_alpha,
         force_model_rebuild=args.force_model_rebuild,
         progress_every=args.progress_every,
+        lightfm_penalties=tuple(sorted(penalty_overrides.items())),
     )
+    default_lightfm_dir = args.lightfm_artifacts_dir or artifacts_dir / "lightfm"
+    lightfm_artifacts = {
+        name: Path(artifact_overrides.get(name, default_lightfm_dir / f"{name}.npz"))
+        for name in model_names
+        if name.startswith("lightfm_")
+    }
     result = run_personalized_evaluation(
         store,
         catalog,
@@ -218,10 +316,7 @@ def main() -> None:
         artifacts_dir=artifacts_dir,
         output_dir=output_dir,
         config=run_config,
-        lightfm_artifacts={
-            name: (args.lightfm_artifacts_dir or artifacts_dir / "lightfm") / f"{name}.npz"
-            for name in ("lightfm_id", "lightfm_hybrid")
-        },
+        lightfm_artifacts=lightfm_artifacts,
         progress=progress,
     )
     _print_summary(result)

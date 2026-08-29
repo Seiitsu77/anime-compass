@@ -4,6 +4,7 @@ import hashlib
 import heapq
 import json
 import math
+import re
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -11,11 +12,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import numpy as np
+import numpy.typing as npt
 
 from backend.anime_agent.collaborative import ARTIFACT_VERSION, CollaborativeIndex
 from backend.anime_agent.lightfm_serving import LightFMServingIndex
 from backend.anime_agent.recommender import DEFAULT_CHANNEL_WEIGHTS, MODEL_VERSION, AnimeRecommender
 
+from .metrics import normalized_log_popularity
 from .split import SplitStore, UserSplit, sha256_file
 
 
@@ -51,6 +54,8 @@ class OfflineEvaluationModel(Protocol):
     build_duration_seconds: float
     artifact_path: Path | None
     resident_array_bytes: int
+    # Set by the runner after a build so engineering costs can be reported.
+    offline_peak_process_rss_bytes: int | None
 
     def recommend(self, user: UserSplit, k: int) -> OfflineRecommendation: ...
 
@@ -59,9 +64,9 @@ def compute_train_statistics(store: SplitStore, catalog_ids: Sequence[int]) -> T
     """Aggregate train-only item statistics in one bounded-memory pass."""
     anime_ids = np.asarray(sorted({int(value) for value in catalog_ids}), dtype=np.int64)
     index_by_id = {int(anime_id): index for index, anime_id in enumerate(anime_ids.tolist())}
-    positive_count = np.zeros(len(anime_ids), dtype=np.int64)
-    observed_count = np.zeros(len(anime_ids), dtype=np.int64)
-    observed_sum = np.zeros(len(anime_ids), dtype=np.float64)
+    positive_count: npt.NDArray[Any] = np.zeros(len(anime_ids), dtype=np.int64)
+    observed_count: npt.NDArray[Any] = np.zeros(len(anime_ids), dtype=np.int64)
+    observed_sum: npt.NDArray[Any] = np.zeros(len(anime_ids), dtype=np.float64)
     users = 0
     for user in store.iter_users():
         users += 1
@@ -121,13 +126,14 @@ class PopularityModel:
     ):
         self.statistics = statistics
         self.build_duration_seconds = build_duration_seconds
-        self.artifact_path = artifact_path
+        self.artifact_path: Path | None = artifact_path
         self.config = {"signal": "positive training interaction count", "tie_breaker": "anime_id"}
         ordered = sorted(
             zip(statistics.anime_ids.tolist(), statistics.positive_count.tolist(), strict=True),
             key=lambda pair: (-int(pair[1]), int(pair[0])),
         )
         self.ordered_ids = np.asarray([anime_id for anime_id, _count in ordered], dtype=np.int64)
+        self.offline_peak_process_rss_bytes: int | None = None
         self.resident_array_bytes = int(
             statistics.anime_ids.nbytes + statistics.positive_count.nbytes + self.ordered_ids.nbytes
         )
@@ -185,10 +191,10 @@ def build_countsketch_artifact_from_split(
         raise ValueError("Cannot train CountSketch with an empty catalog")
     index_by_id = {int(anime_id): index for index, anime_id in enumerate(anime_ids.tolist())}
     dimensions = projections * width
-    vectors = np.zeros((len(anime_ids), dimensions), dtype=np.float32)
-    counts = np.zeros(len(anime_ids), dtype=np.int64)
-    sums = np.zeros(len(anime_ids), dtype=np.float64)
-    offsets = np.arange(projections, dtype=np.int64) * width
+    vectors: npt.NDArray[Any] = np.zeros((len(anime_ids), dimensions), dtype=np.float32)
+    counts: npt.NDArray[Any] = np.zeros(len(anime_ids), dtype=np.int64)
+    sums: npt.NDArray[Any] = np.zeros(len(anime_ids), dtype=np.float64)
+    offsets: npt.NDArray[Any] = np.arange(projections, dtype=np.int64) * width
     ratings_used = 0
     users_seen = 0
 
@@ -294,13 +300,14 @@ class CountSketchModel:
         self.index = index
         self.catalog_ids = tuple(sorted({int(value) for value in catalog_ids}))
         self.build_duration_seconds = build_duration_seconds
-        self.artifact_path = artifact_path
+        self.artifact_path: Path | None = artifact_path
         self.config = {
             "method": index.metadata.get("method"),
             "dimensions": int(index.vectors.shape[1]),
             "profile_feedback": "positive training interactions",
             "training_feedback": "all observed train ratings, classes kept distinct",
         }
+        self.offline_peak_process_rss_bytes: int | None = None
         self.resident_array_bytes = int(
             index.anime_ids.nbytes
             + index.vectors.nbytes
@@ -321,30 +328,56 @@ class CountSketchModel:
 
 
 class LightFMModel:
-    version = "lightfm-export-v1"
+    version = "lightfm-export-v2"
 
-    def __init__(self, index: LightFMServingIndex, *, name: str, artifact_path: Path):
-        if name not in {"lightfm_id", "lightfm_hybrid"}:
+    def __init__(
+        self,
+        index: LightFMServingIndex,
+        *,
+        name: str,
+        artifact_path: Path,
+        train_positive_counts: Mapping[int, int] | None = None,
+        popularity_penalty_lambda: float = 0.0,
+    ):
+        if not re.fullmatch(r"lightfm_[a-z0-9_]+", name):
             raise ValueError("LightFM evaluation model name is invalid")
-        expected_variant = index.metadata.get("variant")
-        if expected_variant != name:
-            raise ValueError(f"LightFM artifact variant {expected_variant!r} does not match {name!r}")
+        if popularity_penalty_lambda < 0.0:
+            raise ValueError("LightFM popularity penalty cannot be negative")
+        artifact_variant = str(index.metadata.get("variant") or "")
+        if not re.fullmatch(r"lightfm_[a-z0-9_]+", artifact_variant):
+            raise ValueError("LightFM artifact is missing a valid variant name")
+        if popularity_penalty_lambda and train_positive_counts is None:
+            raise ValueError("Train-positive counts are required for LightFM popularity debiasing")
         self.name = name
         self.index = index
-        self.artifact_path = Path(artifact_path)
+        self.artifact_path: Path | None = Path(artifact_path)
+        self.popularity_penalty_lambda = float(popularity_penalty_lambda)
+        self._popularity_penalty = np.asarray(
+            [
+                normalized_log_popularity(int(anime_id), train_positive_counts or {})
+                for anime_id in index.anime_ids.tolist()
+            ],
+            dtype=np.float32,
+        )
         self.build_duration_seconds = float(index.metadata.get("selected_training_duration_seconds", 0.0))
         self.offline_training_duration_seconds = float(
             index.metadata.get("total_search_duration_seconds", self.build_duration_seconds)
         )
         self.offline_peak_process_rss_bytes = index.metadata.get("peak_process_rss_bytes")
-        self.resident_array_bytes = index.resident_array_bytes
+        self.resident_array_bytes = index.resident_array_bytes + int(self._popularity_penalty.nbytes)
         self.config = {
             "trainer": "LightFM",
             "variant": name,
+            "artifact_variant": artifact_variant,
             "selected_config": dict(index.metadata.get("selected_config") or {}),
             "selection_data": index.metadata.get("selection_data"),
             "selected_validation_metrics": dict(index.metadata.get("selected_validation_metrics") or {}),
+            "selected_validation_diagnostics": dict(index.metadata.get("selected_validation_diagnostics") or {}),
             "feature_summary": dict(index.metadata.get("feature_summary") or {}),
+            "popularity_penalty_lambda": self.popularity_penalty_lambda,
+            "popularity_penalty_formula": (
+                "raw_score - lambda * log1p(train_positive_count)/log1p(max_train_positive_count)"
+            ),
             "training_feedback": "positive training interactions only; explicit negatives remain separate and unused",
             "candidate_catalog": "full catalog minus all known training ratings",
             "serving_runtime": "NumPy-only exported embeddings and biases",
@@ -353,9 +386,28 @@ class LightFMModel:
 
     def recommend(self, user: UserSplit, k: int) -> OfflineRecommendation:
         known = [anime_id for anime_id, _rating in user.all_observed_training_ratings]
+        if not self.popularity_penalty_lambda:
+            return OfflineRecommendation(
+                self.index.recommend(user.user_id, known_ids=known, k=k),
+                {},
+            )
+        scores = self.index.scores_for_user(user.user_id)
+        scores = scores - self.popularity_penalty_lambda * self._popularity_penalty
+        known_array = np.asarray(sorted({int(value) for value in known}), dtype=np.int64)
+        candidate_mask: npt.NDArray[Any] = np.ones(len(self.index.anime_ids), dtype=bool)
+        if len(known_array):
+            rows: npt.NDArray[Any] = np.searchsorted(self.index.anime_ids, known_array)
+            valid = rows < len(self.index.anime_ids)
+            rows = rows[valid]
+            values = known_array[valid]
+            rows = rows[np.asarray(self.index.anime_ids)[rows] == values]
+            candidate_mask[rows] = False
+        candidates = np.flatnonzero(candidate_mask)
+        order = np.lexsort((self.index.anime_ids[candidates], -scores[candidates]))
+        selected = candidates[order[: min(k, len(order))]]
         return OfflineRecommendation(
-            self.index.recommend(user.user_id, known_ids=known, k=k),
-            {},
+            [int(value) for value in self.index.anime_ids[selected].tolist()],
+            {"popularity_penalty_lambda": self.popularity_penalty_lambda},
         )
 
 
@@ -377,7 +429,7 @@ def sanitize_catalog_with_training_statistics(
     quality_order = sorted(
         statistics.anime_ids.tolist(),
         key=lambda anime_id: (
-            -float(quality_by_id[int(anime_id)]) if quality_by_id[int(anime_id)] is not None else math.inf,
+            -float(quality_by_id[int(anime_id)] or 0.0) if quality_by_id[int(anime_id)] is not None else math.inf,
             int(anime_id),
         ),
     )
@@ -430,13 +482,18 @@ class CurrentHybridModel:
         build_duration_seconds: float,
         artifact_path: Path,
         catalog_artifact_path: Path | None = None,
+        name: str | None = None,
+        weights: Mapping[str, float] | None = None,
     ):
         self.recommender = recommender
+        if name is not None:
+            self.name = name
         self.build_duration_seconds = build_duration_seconds
-        self.artifact_path = artifact_path
+        self.artifact_path: Path | None = artifact_path
         self.catalog_artifact_path = catalog_artifact_path
         self.config = {
-            "weights": dict(DEFAULT_CHANNEL_WEIGHTS),
+            "weights": dict(weights or DEFAULT_CHANNEL_WEIGHTS),
+            "weight_source": "learned" if weights else "hand_set",
             "diversity_strength": 0.12,
             "profile_feedback": "positive training interactions",
             "catalog_aggregate_fields": "rating-derived fields rebuilt or cleared from training data",
@@ -445,6 +502,7 @@ class CurrentHybridModel:
             "llm_used": False,
             "ranking_only": True,
         }
+        self.offline_peak_process_rss_bytes: int | None = None
         self.resident_array_bytes = _recommender_array_bytes(recommender)
 
     def recommend(self, user: UserSplit, k: int) -> OfflineRecommendation:

@@ -6,6 +6,7 @@ import gzip
 import json
 import os
 import platform
+import re
 import sys
 import time
 import tracemalloc
@@ -22,6 +23,16 @@ from backend.anime_agent.collaborative import CollaborativeIndex
 from backend.anime_agent.lightfm_serving import LightFMServingIndex
 from backend.anime_agent.recommender import AnimeRecommender
 
+from .collaborative_baselines import (
+    ALSCollaborativeAdapter,
+    ALSModel,
+    ItemItemModel,
+    OracleModel,
+    RandomModel,
+    build_als_artifact_from_split,
+    build_item_item_artifact_from_split,
+)
+from .fusion import load_fusion_weights
 from .metrics import (
     build_item_popularity_buckets,
     intra_list_diversity,
@@ -31,6 +42,7 @@ from .metrics import (
     paired_bootstrap_aligned,
     ranking_metrics,
     recall_at_k,
+    recommendation_popularity_concentration,
     user_activity_segment,
 )
 from .models import (
@@ -60,8 +72,19 @@ class EvaluationRunConfig:
     bootstrap_iterations: int = 2_000
     countsketch_projections: int = 3
     countsketch_width: int = 128
+    item_item_neighbors: int = 200
+    fusion_weights_path: str | None = None
+    semantic_artifact_path: str | None = None
+    # User IDs any earlier experiment already inspected. Excluding them is what
+    # makes a confirmation run genuinely held out after exploratory work.
+    excluded_user_ids: tuple[int, ...] = ()
+    als_factors: int = 64
+    als_iterations: int = 15
+    als_regularization: float = 0.05
+    als_alpha: float = 40.0
     force_model_rebuild: bool = False
     progress_every: int = 25
+    lightfm_penalties: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         if self.recommendation_k < 20:
@@ -75,11 +98,36 @@ class EvaluationRunConfig:
             raise ValueError(f"sampling_strategy must be one of {sorted(allowed_sampling)}")
         if self.users_per_stratum is not None and self.users_per_stratum < 1:
             raise ValueError("users_per_stratum must be positive when provided")
-        allowed_models = {"popularity", "countsketch_cf", "current_hybrid", "lightfm_id", "lightfm_hybrid"}
+        if self.item_item_neighbors < 1:
+            raise ValueError("item_item_neighbors must be positive")
+        if self.als_factors < 1 or self.als_iterations < 1:
+            raise ValueError("als_factors and als_iterations must be positive")
+        if self.als_regularization < 0.0 or self.als_alpha <= 0.0:
+            raise ValueError("als_regularization must be non-negative and als_alpha positive")
+        allowed_models = {
+            "popularity",
+            "random",
+            "current_hybrid_als",
+            "oracle",
+            "countsketch_cf",
+            "current_hybrid",
+            "current_hybrid_learned",
+            "item_item_cosine",
+            "als",
+        }
         names = tuple(self.model_names)
-        if not names or len(names) != len(set(names)) or not set(names).issubset(allowed_models):
-            raise ValueError(f"model_names must be a unique non-empty subset of {sorted(allowed_models)}")
+        invalid = [
+            name for name in names if name not in allowed_models and re.fullmatch(r"lightfm_[a-z0-9_]+", name) is None
+        ]
+        if not names or len(names) != len(set(names)) or invalid:
+            raise ValueError("model_names must be unique built-ins or names matching lightfm_[a-z0-9_]+")
+        penalties = tuple((str(name), float(value)) for name, value in self.lightfm_penalties)
+        if len(penalties) != len({name for name, _value in penalties}):
+            raise ValueError("LightFM popularity penalties must have unique model names")
+        if any(name not in names or not name.startswith("lightfm_") or value < 0.0 for name, value in penalties):
+            raise ValueError("LightFM penalties require a configured LightFM model and a non-negative lambda")
         object.__setattr__(self, "model_names", names)
+        object.__setattr__(self, "lightfm_penalties", penalties)
 
 
 @dataclass(frozen=True)
@@ -156,7 +204,7 @@ def _peak_process_rss_bytes() -> int | None:
     try:
         import resource
 
-        value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)  # type: ignore[attr-defined]
         return value if sys.platform == "darwin" else value * 1024
     except (ImportError, ValueError):
         return None
@@ -295,7 +343,7 @@ def _prepare_models(
     )
     countsketch.offline_peak_process_rss_bytes = countsketch_process_peak
 
-    build_details = {
+    build_details: dict[str, Any] = {
         "split_sha256": split_sha256,
         "training_statistics": {
             "duration_seconds": statistics_seconds,
@@ -324,6 +372,25 @@ def _prepare_models(
         "countsketch_cf": countsketch,
     }
 
+    # Reference points: a floor and an analytic ceiling. Neither is deployable;
+    # they exist so every other number has a known scale and so a metric bug
+    # shows up as an implausible random or sub-ceiling oracle score.
+    if "random" in config.model_names:
+        models_by_name["random"] = RandomModel(catalog_ids, seed=config.sample_seed)
+    if "oracle" in config.model_names:
+        models_by_name["oracle"] = OracleModel(catalog_ids, holdout="test")
+
+    semantic_index = None
+    if config.semantic_artifact_path and {"current_hybrid", "current_hybrid_learned"} & set(config.model_names):
+        # Semantic vectors come from synopsis text, not ratings, so including
+        # them carries no held-out leakage -- the same argument that already
+        # justifies the TF-IDF and LSA channels.
+        semantic_index = _load_semantic_index_for_evaluation(Path(config.semantic_artifact_path), catalog)
+        build_details["semantic"] = {
+            "artifact_path": config.semantic_artifact_path,
+            "available": semantic_index is not None,
+        }
+
     if "current_hybrid" in config.model_names:
 
         def build_hybrid() -> CurrentHybridModel:
@@ -335,6 +402,7 @@ def _prepare_models(
             recommender = AnimeRecommender(
                 evaluation_catalog,
                 collaborative_index=collaborative_index,
+                semantic_index=semantic_index,
             )
             return CurrentHybridModel(
                 recommender,
@@ -362,17 +430,163 @@ def _prepare_models(
             "measurement_note": "RSS delta is used because tracemalloc materially distorts hybrid initialization.",
         }
 
+    if "current_hybrid_als" in config.model_names:
+        substitution_als = ALSModel(
+            artifacts_dir / "als_train_only.npz",
+            catalog_ids,
+            build_duration_seconds=0.0,
+        )
+        if substitution_als.metadata.get("split_sha256") != split_sha256:
+            raise ValueError("The ALS artifact was trained from a different personalized split")
+
+        def build_hybrid_als() -> CurrentHybridModel:
+            # The catalog is sanitized with the SAME CountSketch index the
+            # baseline hybrid uses, and Bayesian quality statistics still come
+            # from that index, so the quality channel is byte-identical across
+            # both arms. The only substantive change is the collaborative
+            # similarity signal.
+            evaluation_catalog = sanitize_catalog_with_training_statistics(
+                catalog,
+                statistics,
+                collaborative_index,
+            )
+            recommender = AnimeRecommender(
+                evaluation_catalog,
+                collaborative_index=ALSCollaborativeAdapter(substitution_als, quality_source=collaborative_index),
+                semantic_index=semantic_index,
+            )
+            return CurrentHybridModel(
+                recommender,
+                build_duration_seconds=0.0,
+                artifact_path=artifacts_dir / "als_train_only.npz",
+                catalog_artifact_path=catalog_path,
+                name="current_hybrid_als",
+            )
+
+        hybrid_als, hybrid_als_seconds, _peak = _measure_build(build_hybrid_als, trace_allocations=False)
+        hybrid_als.build_duration_seconds = hybrid_als_seconds
+        models_by_name["current_hybrid_als"] = hybrid_als
+        build_details["current_hybrid_als"] = {
+            "collaborative_channel": "implicit ALS (substituted for CountSketch)",
+            "als_metadata": substitution_als.metadata,
+        }
+
+    if "current_hybrid_learned" in config.model_names:
+        if config.fusion_weights_path is None:
+            raise ValueError("current_hybrid_learned requires --fusion-weights")
+        learned_weights = load_fusion_weights(Path(config.fusion_weights_path))
+
+        def build_learned_hybrid() -> CurrentHybridModel:
+            evaluation_catalog = sanitize_catalog_with_training_statistics(
+                catalog,
+                statistics,
+                collaborative_index,
+            )
+            recommender = AnimeRecommender(
+                evaluation_catalog,
+                weights=dict(learned_weights),
+                collaborative_index=collaborative_index,
+                semantic_index=semantic_index,
+            )
+            return CurrentHybridModel(
+                recommender,
+                build_duration_seconds=0.0,
+                artifact_path=countsketch_path,
+                catalog_artifact_path=catalog_path,
+                name="current_hybrid_learned",
+                weights=learned_weights,
+            )
+
+        learned_hybrid, learned_seconds, _learned_peak = _measure_build(
+            build_learned_hybrid,
+            trace_allocations=False,
+        )
+        learned_hybrid.build_duration_seconds = learned_seconds
+        models_by_name["current_hybrid_learned"] = learned_hybrid
+        build_details["current_hybrid_learned"] = {
+            "fusion_weights_path": str(config.fusion_weights_path),
+            "weights": dict(learned_weights),
+        }
+
+    if "item_item_cosine" in config.model_names:
+        item_item_path = artifacts_dir / "item_item_train_only.npz"
+        item_item_rss_before = _current_process_rss_bytes()
+        if config.force_model_rebuild or not item_item_path.exists():
+            item_item_metadata, item_item_seconds, item_item_peak = _measure_build(
+                lambda: build_item_item_artifact_from_split(
+                    store,
+                    catalog,
+                    item_item_path,
+                    neighbors=config.item_item_neighbors,
+                )
+            )
+        else:
+            with np.load(item_item_path, allow_pickle=False) as artifact:
+                item_item_metadata = json.loads(str(artifact["metadata_json"].item()))
+            item_item_seconds = float(item_item_metadata.get("build_duration_seconds", 0.0))
+            item_item_peak = None
+        if item_item_metadata.get("split_sha256") != split_sha256:
+            raise ValueError("The item-item artifact was trained from a different personalized split")
+        item_item = ItemItemModel(item_item_path, catalog_ids, build_duration_seconds=item_item_seconds)
+        item_item.offline_peak_process_rss_bytes = _peak_process_rss_bytes()
+        models_by_name["item_item_cosine"] = item_item
+        build_details["item_item_cosine"] = {
+            "metadata": item_item_metadata,
+            "python_tracemalloc_peak_bytes": item_item_peak,
+            "process_rss_before_bytes": item_item_rss_before,
+            "process_rss_after_bytes": _current_process_rss_bytes(),
+        }
+
+    if "als" in config.model_names:
+        als_path = artifacts_dir / "als_train_only.npz"
+        als_rss_before = _current_process_rss_bytes()
+        if config.force_model_rebuild or not als_path.exists():
+            als_metadata, als_seconds, als_peak = _measure_build(
+                lambda: build_als_artifact_from_split(
+                    store,
+                    catalog,
+                    als_path,
+                    factors=config.als_factors,
+                    iterations=config.als_iterations,
+                    regularization=config.als_regularization,
+                    alpha=config.als_alpha,
+                    seed=config.sample_seed,
+                )
+            )
+        else:
+            with np.load(als_path, allow_pickle=False) as artifact:
+                als_metadata = json.loads(str(artifact["metadata_json"].item()))
+            als_seconds = float(als_metadata.get("build_duration_seconds", 0.0))
+            als_peak = None
+        if als_metadata.get("split_sha256") != split_sha256:
+            raise ValueError("The ALS artifact was trained from a different personalized split")
+        als = ALSModel(als_path, catalog_ids, build_duration_seconds=als_seconds)
+        als.offline_peak_process_rss_bytes = _peak_process_rss_bytes()
+        models_by_name["als"] = als
+        build_details["als"] = {
+            "metadata": als_metadata,
+            "python_tracemalloc_peak_bytes": als_peak,
+            "process_rss_before_bytes": als_rss_before,
+            "process_rss_after_bytes": _current_process_rss_bytes(),
+        }
+
     configured_lightfm_paths = dict(lightfm_artifacts or {})
-    for name in ("lightfm_id", "lightfm_hybrid"):
-        if name not in config.model_names:
-            continue
+    lightfm_penalties = dict(config.lightfm_penalties)
+    train_positive_counts = statistics.positive_counts_by_id()
+    for name in (value for value in config.model_names if value.startswith("lightfm_")):
         artifact_path = Path(configured_lightfm_paths.get(name, artifacts_dir / "lightfm" / f"{name}.npz"))
         load_started = time.perf_counter()
         index = LightFMServingIndex.load(artifact_path, catalog)
         load_seconds = time.perf_counter() - load_started
         if index.metadata.get("split_sha256") != split_sha256:
             raise ValueError(f"{name} artifact was trained from a different personalized split")
-        model = LightFMModel(index, name=name, artifact_path=artifact_path)
+        model = LightFMModel(
+            index,
+            name=name,
+            artifact_path=artifact_path,
+            train_positive_counts=train_positive_counts,
+            popularity_penalty_lambda=lightfm_penalties.get(name, 0.0),
+        )
         models_by_name[name] = model
         build_details["lightfm"][name] = {
             "artifact_load_duration_seconds": load_seconds,
@@ -380,12 +594,13 @@ def _prepare_models(
             "total_tuning_duration_seconds": model.config["total_tuning_duration_seconds"],
             "peak_training_process_rss_bytes": index.metadata.get("peak_process_rss_bytes"),
             "numpy_score_roundtrip_max_abs_error": index.metadata.get("numpy_score_roundtrip_max_abs_error"),
+            "popularity_penalty_lambda": lightfm_penalties.get(name, 0.0),
         }
 
     return (
         [models_by_name[name] for name in config.model_names],
         build_details,
-        statistics.positive_counts_by_id(),
+        train_positive_counts,
     )
 
 
@@ -421,11 +636,16 @@ def _evaluate_one_model(
         for bucket in ("head", "mid_tail", "long_tail")
     }
     exposure_counts: Counter[str] = Counter()
+    exposure_by_item: Counter[int] = Counter()
     exposed_ids: set[int] = set()
     novelty_total = 0.0
     recommendation_count = 0
     popularity_bias_total = 0.0
     popularity_bias_users = 0
+    recommended_normalized_popularity_total = 0.0
+    profile_normalized_popularity_total = 0.0
+    recommended_raw_popularity_total = 0.0
+    profile_raw_popularity_total = 0.0
     diversity_total = 0.0
     latencies: list[float] = []
     serialization_latencies: list[float] = []
@@ -477,12 +697,12 @@ def _evaluate_one_model(
         ndcg_values.append(metric.ndcg_at_10)
         recall_values.append(metric.recall_at_10)
         for name in metric_names:
-            metric_totals[name] += float(row[name])
+            metric_totals[name] += float(row[name])  # type: ignore[arg-type]
 
         segment = str(row["user_segment"])
         segment_totals[segment]["users"] += 1
         for name in ("ndcg_at_10", "recall_at_10", "hit_rate_at_10"):
-            segment_totals[segment][name] += float(row[name])
+            segment_totals[segment][name] += float(row[name])  # type: ignore[arg-type]
 
         for bucket in ("head", "mid_tail", "long_tail"):
             bucket_relevant = [anime_id for anime_id in relevant if bucket_by_id.get(int(anime_id)) == bucket]
@@ -495,6 +715,7 @@ def _evaluate_one_model(
         exposed_ids.update(ranking)
         for anime_id in ranking:
             exposure_counts[bucket_by_id.get(anime_id, "unknown")] += 1
+            exposure_by_item[anime_id] += 1
             novelty_total += item_novelty(
                 anime_id,
                 train_positive_counts,
@@ -510,7 +731,17 @@ def _evaluate_one_model(
             history_popularity = sum(
                 normalized_log_popularity(anime_id, train_positive_counts) for anime_id in history
             ) / len(history)
+            recommendation_raw_popularity = sum(
+                int(train_positive_counts.get(anime_id, 0)) for anime_id in ranking
+            ) / len(ranking)
+            history_raw_popularity = sum(int(train_positive_counts.get(anime_id, 0)) for anime_id in history) / len(
+                history
+            )
             popularity_bias_total += recommendation_popularity - history_popularity
+            recommended_normalized_popularity_total += recommendation_popularity
+            profile_normalized_popularity_total += history_popularity
+            recommended_raw_popularity_total += recommendation_raw_popularity
+            profile_raw_popularity_total += history_raw_popularity
             popularity_bias_users += 1
         diversity_total += intra_list_diversity(ranking, genres_by_id)
 
@@ -541,6 +772,11 @@ def _evaluate_one_model(
             "ndcg_at_10": float(values["ndcg_at_10"]) / users_in_bucket if users_in_bucket else 0.0,
         }
     total_exposure = sum(exposure_counts.values())
+    concentration = recommendation_popularity_concentration(
+        exposure_by_item,
+        catalog_ids,
+        train_positive_counts,
+    )
     summary: dict[str, Any] = {
         "model": model.name,
         "model_version": model.version,
@@ -549,6 +785,19 @@ def _evaluate_one_model(
         "catalog_coverage": len(exposed_ids) / len(catalog_ids) if catalog_ids else 0.0,
         "novelty_bits": novelty_total / recommendation_count if recommendation_count else 0.0,
         "popularity_bias": (popularity_bias_total / popularity_bias_users if popularity_bias_users else 0.0),
+        "recommended_normalized_popularity": (
+            recommended_normalized_popularity_total / popularity_bias_users if popularity_bias_users else 0.0
+        ),
+        "profile_normalized_popularity": (
+            profile_normalized_popularity_total / popularity_bias_users if popularity_bias_users else 0.0
+        ),
+        "recommended_training_popularity_count": (
+            recommended_raw_popularity_total / popularity_bias_users if popularity_bias_users else 0.0
+        ),
+        "profile_training_popularity_count": (
+            profile_raw_popularity_total / popularity_bias_users if popularity_bias_users else 0.0
+        ),
+        "popularity_concentration": concentration,
         "intra_list_diversity": diversity_total / evaluated_users if evaluated_users else 0.0,
         "recommendation_exposure": {
             bucket: exposure_counts.get(bucket, 0) / total_exposure if total_exposure else 0.0
@@ -580,20 +829,66 @@ def _evaluate_one_model(
     )
 
 
+def _load_semantic_index_for_evaluation(artifact_path: Path, catalog: list[dict[str, Any]]) -> Any:
+    """Load the optional semantic index, or return None if it is unusable.
+
+    The channel is optional by design: the recommender renormalises weights
+    across active channels, so a missing artifact degrades the blend rather than
+    failing the run. A stale or mismatched artifact is treated the same way,
+    because silently scoring against the wrong catalog would be worse.
+    """
+    try:
+        from app.core.config import get_settings
+        from app.embeddings.index import SemanticEmbeddingIndex
+        from app.embeddings.sentence_transformer import SentenceTransformerEmbeddingProvider
+
+        settings = get_settings()
+        provider = SentenceTransformerEmbeddingProvider(
+            settings.embedding_model,
+            model_revision=settings.embedding_model_revision,
+            device=settings.embedding_device,
+            batch_size=settings.embedding_batch_size,
+            local_files_only=True,
+        )
+        return SemanticEmbeddingIndex.load(
+            artifact_path,
+            provider,
+            catalog,
+            expected_dimension=settings.embedding_dimensions,
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure means "channel unavailable"
+        print(f"semantic: unavailable ({type(exc).__name__}); continuing without the channel")
+        return None
+
+
 def _bootstrap_comparisons(
     metrics_by_model: Mapping[str, AlignedPrimaryMetrics],
     *,
     iterations: int,
     seed: int,
 ) -> list[dict[str, Any]]:
-    candidates = (
-        ("countsketch_cf", "popularity"),
-        ("lightfm_id", "countsketch_cf"),
-        ("lightfm_hybrid", "countsketch_cf"),
-        ("lightfm_hybrid", "lightfm_id"),
-        ("current_hybrid", "countsketch_cf"),
-        ("current_hybrid", "popularity"),
-    )
+    lightfm_names = [name for name in metrics_by_model if name.startswith("lightfm_")]
+    candidates: list[tuple[str, str]] = []
+    if "countsketch_cf" in metrics_by_model and "popularity" in metrics_by_model:
+        candidates.append(("countsketch_cf", "popularity"))
+    if "countsketch_cf" in metrics_by_model:
+        candidates.extend((name, "countsketch_cf") for name in lightfm_names)
+    if len(lightfm_names) > 1:
+        reference = lightfm_names[0]
+        candidates.extend((name, reference) for name in lightfm_names[1:])
+    if "current_hybrid" in metrics_by_model and "countsketch_cf" in metrics_by_model:
+        candidates.append(("current_hybrid", "countsketch_cf"))
+    if "current_hybrid" in metrics_by_model and "popularity" in metrics_by_model:
+        candidates.append(("current_hybrid", "popularity"))
+    # Reference collaborative baselines are compared against the production
+    # channel, and the exact/sketched pair isolates the projection's cost.
+    if "countsketch_cf" in metrics_by_model:
+        candidates.extend((name, "countsketch_cf") for name in ("item_item_cosine", "als") if name in metrics_by_model)
+    if "als" in metrics_by_model:
+        candidates.extend((name, "als") for name in lightfm_names)
+    # A learned blend is only interesting relative to the hand-set blend it replaces.
+    if "current_hybrid_learned" in metrics_by_model and "current_hybrid" in metrics_by_model:
+        candidates.append(("current_hybrid_learned", "current_hybrid"))
     comparisons = tuple(
         (left, right) for left, right in candidates if left in metrics_by_model and right in metrics_by_model
     )
@@ -652,7 +947,7 @@ def _dependency_inclusive_build_seconds(result: Mapping[str, Any], model_name: s
     statistics_seconds = float(result["build_details"]["training_statistics"]["duration_seconds"])
     if model_name == "popularity":
         return statistics_seconds
-    if model_name in {"lightfm_id", "lightfm_hybrid"}:
+    if model_name.startswith("lightfm_"):
         engineering = models[model_name]["engineering"]
         return float(
             engineering.get(
@@ -694,7 +989,7 @@ def _offline_peak_rss_bytes(result: Mapping[str, Any], summary: Mapping[str, Any
         return int(explicit)
     name = str(summary["model"])
     build_details = result.get("build_details", {})
-    if name in {"lightfm_id", "lightfm_hybrid"}:
+    if name.startswith("lightfm_"):
         value = build_details.get("lightfm", {}).get(name, {}).get("peak_training_process_rss_bytes")
     elif name == "countsketch_cf":
         value = build_details.get("countsketch", {}).get("process_peak_rss_after_bytes")
@@ -735,6 +1030,36 @@ def _write_slice_csvs(output_dir: Path, result: Mapping[str, Any]) -> None:
                         "recommendation_exposure": summary["recommendation_exposure"][bucket],
                     }
                 )
+
+    with (output_dir / "popularity_concentration.csv").open("w", encoding="utf-8", newline="") as file:
+        fields = [
+            "model",
+            "top_1_percent_share",
+            "top_5_percent_share",
+            "top_10_percent_share",
+            "top_20_percent_share",
+            "unique_recommended_items",
+            "exposure_gini",
+            "catalog_coverage",
+            "average_training_popularity_count",
+            "average_normalized_log_popularity",
+            "recommended_training_popularity_count",
+            "profile_training_popularity_count",
+            "recommended_normalized_popularity",
+            "profile_normalized_popularity",
+            "popularity_bias",
+        ]
+        writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        for summary in summaries:
+            concentration = summary["popularity_concentration"]
+            writer.writerow(
+                {
+                    "model": summary["model"],
+                    **{field: concentration[field] for field in fields[1:10]},
+                    **{field: summary[field] for field in fields[10:]},
+                }
+            )
 
     with (output_dir / "engineering.csv").open("w", encoding="utf-8", newline="") as file:
         fields = [
@@ -814,6 +1139,50 @@ PER_USER_FIELDS = [
 ]
 
 
+def _channel_activity(model_config: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Report which blend channels carried weight, for models that have a blend.
+
+    A channel can be present, wired, and configured yet contribute nothing --
+    either because its weight is zero or because its artifact never loaded. That
+    is exactly how the semantic channel stayed dead across every published
+    benchmark, so the state is recorded per run rather than inferred later.
+    """
+    weights = model_config.get("weights")
+    if not isinstance(weights, Mapping):
+        return None
+    weighted = {channel: float(value) for channel, value in weights.items() if float(value) > 0.0}
+    zero_weight = sorted(channel for channel, value in weights.items() if float(value) <= 0.0)
+    return {
+        "weight_source": model_config.get("weight_source", "hand_set"),
+        "weighted_channels": dict(sorted(weighted.items())),
+        "zero_weight_channels": zero_weight,
+        "semantic_artifact_loaded": model_config.get("semantic_embedding_available"),
+    }
+
+
+def _score_variance(metrics: AlignedPrimaryMetrics | None) -> dict[str, Any] | None:
+    """Per-user spread of the primary metrics.
+
+    A mean alone hides whether a model is uniformly mediocre or bimodal, and a
+    near-zero variance is a signal that a component is inert rather than
+    balanced.
+    """
+    if metrics is None:
+        return None
+    summary: dict[str, Any] = {"users": int(len(metrics.user_ids))}
+    for name in ("ndcg_at_10", "recall_at_10"):
+        values = np.asarray(getattr(metrics, name), dtype=np.float64)
+        if not len(values):
+            continue
+        summary[name] = {
+            "mean": float(values.mean()),
+            "variance": float(values.var(ddof=1)) if len(values) > 1 else 0.0,
+            "std": float(values.std(ddof=1)) if len(values) > 1 else 0.0,
+            "zero_fraction": float(np.mean(values <= 0.0)),
+        }
+    return summary
+
+
 def run_personalized_evaluation(
     store: SplitStore,
     catalog: list[dict[str, Any]],
@@ -852,6 +1221,7 @@ def run_personalized_evaluation(
         strategy=config.sampling_strategy,
         users_per_stratum=config.users_per_stratum,
         bucket_by_id=bucket_by_id,
+        excluded_user_ids=config.excluded_user_ids,
     )
     evaluation_user_ids = list(sample.user_ids)
     if not evaluation_user_ids:
@@ -972,6 +1342,10 @@ def run_personalized_evaluation(
             "catalog_coverage": "Unique recommended catalog IDs divided by candidate catalog size.",
             "novelty_bits": "Mean -log2((train positive count + 1)/(all train positives + catalog size)).",
             "popularity_bias": "Mean per-user normalized-log popularity of recommendations minus training-positive history.",
+            "popularity_concentration": (
+                "Recommendation-event share inside train-positive popularity top 1/5/10/20%; exposure Gini includes "
+                "all catalog items, including zero-exposure items."
+            ),
             "intra_list_diversity": "Mean pairwise Jaccard distance over catalog genre sets; empty/empty distance is zero.",
             "beyond_accuracy_scope": f"Coverage, novelty, popularity bias, exposure, and ILD use top-{config.recommendation_k} rankings.",
             "serialization": "Timing covers compact ranking-ID JSON serialization, not the production HTTP response payload.",
@@ -1013,6 +1387,8 @@ def run_personalized_evaluation(
             "split_seed": result["dataset"]["split_seed"],
             "positive_threshold": result["dataset"]["rating_threshold"],
             "evaluated_users": len(evaluation_user_ids),
+            "excluded_user_count": len(config.excluded_user_ids),
+            "sample_is_disjoint_from_excluded": not (set(evaluation_user_ids) & set(config.excluded_user_ids)),
             "run_config": result["run_config"],
             "environment": result["environment"],
         },
@@ -1026,6 +1402,8 @@ def run_personalized_evaluation(
                 "offline_peak_process_rss_bytes": _offline_peak_rss_bytes(result, summary),
                 "training_or_build_duration_seconds": summary["engineering"]["build_duration_seconds"],
                 "artifact": summary["engineering"]["artifact"],
+                "channel_activity": _channel_activity(summary["model_config"]),
+                "score_variance": _score_variance(metrics_by_model.get(str(summary["model"]))),
             }
             for summary in summaries
         ],
@@ -1036,6 +1414,7 @@ def run_personalized_evaluation(
         "summary.csv",
         "user_segments.csv",
         "item_popularity.csv",
+        "popularity_concentration.csv",
         "engineering.csv",
         "paired_bootstrap.csv",
         "per_user_metrics.csv.gz",
@@ -1065,6 +1444,10 @@ def refresh_derived_outputs(output_dir: Path) -> None:
     _write_text_lf(output_dir / "report.md", render_markdown_report(result))
     manifest_path = output_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # Refreshing re-renders stored values; it never re-runs inference, so
+    # per-user variance cannot be recomputed here. Carry the recorded values
+    # forward instead of silently dropping them.
+    recorded = {str(entry.get("name")): entry for entry in manifest.get("models", [])}
     manifest["models"] = [
         {
             "name": summary["model"],
@@ -1075,6 +1458,8 @@ def refresh_derived_outputs(output_dir: Path) -> None:
             "offline_peak_process_rss_bytes": _offline_peak_rss_bytes(result, summary),
             "training_or_build_duration_seconds": summary["engineering"]["build_duration_seconds"],
             "artifact": summary["engineering"]["artifact"],
+            "channel_activity": _channel_activity(summary["model_config"]),
+            "score_variance": recorded.get(str(summary["model"]), {}).get("score_variance"),
         }
         for summary in summaries
     ]
@@ -1127,6 +1512,8 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
         "lightfm_id": "LightFM-ID",
         "lightfm_hybrid": "LightFM-Hybrid",
     }
+    for name in model_order:
+        labels.setdefault(name, "LightFM " + name.removeprefix("lightfm_").replace("_", " ").title())
     evaluation_population = result["evaluation_population"]
     sampling_strategy = str(
         evaluation_population.get("sampling_strategy")
@@ -1134,7 +1521,7 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
     )
     report_title = (
         "LightFM Offline Challenger Benchmark"
-        if {"lightfm_id", "lightfm_hybrid"}.intersection(model_order)
+        if any(name.startswith("lightfm_") for name in model_order)
         else "Personalized Offline Recommendation Benchmark"
     )
     evaluation_label = {
@@ -1165,6 +1552,32 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
             f"{_fmt(model['hit_rate_at_10'])} | {_fmt(model['ndcg_at_20'])} | {_fmt(model['recall_at_20'])} | "
             f"{_fmt(model['mrr'])} | {_fmt(model['catalog_coverage'])} | {_fmt(model['novelty_bits'], 3)} | "
             f"{_fmt(model['popularity_bias'])} | {_fmt(model['intra_list_diversity'])} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Recommendation popularity concentration",
+            "",
+            "Popularity ranks and profile comparisons use positive training interactions only. Exposure Gini includes "
+            "every catalog item, including items that receive zero recommendations.",
+            "",
+            "| Model | Top 1% share | Top 5% | Top 10% | Top 20% | Unique items | Exposure Gini | "
+            "Avg train count | Rec profile popularity | User profile popularity |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for name in model_order:
+        model = models[name]
+        concentration = model["popularity_concentration"]
+        lines.append(
+            f"| {labels[name]} | {_fmt(concentration['top_1_percent_share'])} | "
+            f"{_fmt(concentration['top_5_percent_share'])} | {_fmt(concentration['top_10_percent_share'])} | "
+            f"{_fmt(concentration['top_20_percent_share'])} | "
+            f"{int(concentration['unique_recommended_items']):,} | {_fmt(concentration['exposure_gini'])} | "
+            f"{float(concentration['average_training_popularity_count']):.1f} | "
+            f"{_fmt(model['recommended_normalized_popularity'])} | "
+            f"{_fmt(model['profile_normalized_popularity'])} |"
         )
 
     lines.extend(["", "## Performance by training-positive user activity", ""])
@@ -1259,7 +1672,7 @@ def render_markdown_report(result: Mapping[str, Any]) -> str:
         for stage, values in hybrid_stages.items():
             lines.append(f"| {stage.replace('_', ' ')} | {float(values['p50']):.2f}ms | {float(values['p95']):.2f}ms |")
 
-    lightfm_models = [name for name in ("lightfm_id", "lightfm_hybrid") if name in models]
+    lightfm_models = [name for name in model_order if name.startswith("lightfm_")]
     if lightfm_models:
         lines.extend(
             [
