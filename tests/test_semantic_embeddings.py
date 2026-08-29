@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from app.embeddings.index import SemanticEmbeddingIndex
-from backend.anime_agent.recommender import AnimeRecommender
+from backend.anime_agent.recommender import AnimeRecommender, experimental_semantic_weights
 
 
 class FakeEmbeddingProvider:
@@ -80,13 +80,26 @@ def test_semantic_artifact_round_trip_and_channel_activation(
     assert loaded.model_info()["artifact_format_version"] == 1
     assert loaded.model_info()["model_revision"] == "test-revision"
 
-    result = AnimeRecommender(catalog, semantic_index=loaded).recommend(
+    # The channel is retired by default, so it is available but carries no weight.
+    default_result = AnimeRecommender(catalog, semantic_index=loaded).recommend(
         free_text_preferences="ghosts spirits investigation",
         limit=2,
     )[0]
-    channel = result["score_breakdown"]["channels"]["semantic_embedding"]
-    assert channel["active"] is True
-    assert channel["configured_weight"] > 0
+    default_channel = default_result["score_breakdown"]["channels"]["semantic_embedding"]
+    assert default_channel["active"] is True
+    assert default_channel["configured_weight"] == 0.0
+    assert default_channel["weighted_contribution"] == 0.0
+
+    # It can still be switched back on for experiments, which is what keeps the
+    # retirement decision falsifiable.
+    experimental = AnimeRecommender(
+        catalog,
+        weights=experimental_semantic_weights(),
+        semantic_index=loaded,
+    ).recommend(free_text_preferences="ghosts spirits investigation", limit=2)[0]
+    experimental_channel = experimental["score_breakdown"]["channels"]["semantic_embedding"]
+    assert experimental_channel["active"] is True
+    assert experimental_channel["configured_weight"] > 0
 
 
 def test_stale_semantic_artifact_is_rejected(tmp_path: Path, catalog: list[dict[str, object]]) -> None:
@@ -152,12 +165,41 @@ def test_semantic_channel_recovers_a_paraphrased_story_concept(
     provider = ConceptEmbeddingProvider()
     semantic_index = SemanticEmbeddingIndex.build(artifact, provider, catalog)
 
-    results = AnimeRecommender(catalog, semantic_index=semantic_index).recommend(
-        free_text_preferences="paranormal specters",
-        limit=3,
-    )
+    # This asserts the channel's own behaviour, so it must be weighted on: the
+    # production default retires it to zero.
+    results = AnimeRecommender(
+        catalog,
+        weights=experimental_semantic_weights(),
+        semantic_index=semantic_index,
+    ).recommend(free_text_preferences="paranormal specters", limit=3)
 
     assert results[0]["title"] == "Ghost Hunt"
     channel = results[0]["score_breakdown"]["channels"]["semantic_embedding"]
     assert channel["active"] is True
     assert channel["raw_score"] > 0.99
+
+
+def test_semantic_is_retired_from_the_default_blend() -> None:
+    """The default blend must not carry the retired channel's weight.
+
+    Retirement was an evidence-based decision (8.9% relative NDCG@10 loss on 300
+    held-out users). This pins it so the weight cannot drift back silently.
+    """
+    from backend.anime_agent.recommender import (
+        DEFAULT_CHANNEL_WEIGHTS,
+        SEMANTIC_EXPERIMENTAL_WEIGHT,
+    )
+
+    assert DEFAULT_CHANNEL_WEIGHTS["semantic_embedding"] == 0.0
+    # Every other channel keeps its original value; removing 0.14 renormalizes
+    # proportionally rather than introducing new hand-tuned constants.
+    assert DEFAULT_CHANNEL_WEIGHTS["collaborative"] == 0.22
+    assert DEFAULT_CHANNEL_WEIGHTS["metadata"] == 0.16
+    # The experiment path still restores a positive weight.
+    assert experimental_semantic_weights()["semantic_embedding"] == SEMANTIC_EXPERIMENTAL_WEIGHT
+    assert experimental_semantic_weights(0.05)["semantic_embedding"] == 0.05
+
+
+def test_experimental_semantic_weight_rejects_a_negative_value() -> None:
+    with pytest.raises(ValueError):
+        experimental_semantic_weights(-0.1)

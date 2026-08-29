@@ -1,11 +1,25 @@
 {
-  "generated_at": "2026-07-29T09:25:27.543406+00:00",
+  "generated_at": "2026-08-28T17:55:33.526904+00:00",
   "catalog_count": 18064,
   "benchmark_count": 7,
   "top_k": 10,
   "semantic_model": {
-    "available": false,
-    "reason": "RuntimeError"
+    "artifact_format_version": 1,
+    "text_schema_version": "anime-story-v1",
+    "provider": "sentence_transformers",
+    "model_name": "sentence-transformers/all-MiniLM-L6-v2",
+    "model_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "model_version": "sentence-transformers/all-MiniLM-L6-v2",
+    "library_version": "5.6.0",
+    "pretrained": true,
+    "max_sequence_length": 256,
+    "vector_dimension": 384,
+    "document_count": 18064,
+    "dtype": "float32",
+    "preprocessing_timestamp": "2026-08-28T17:52:14.042553+00:00",
+    "source_data_checksum": "048717067bdedce2a4ef566215610d4da0bb7eb2ef63af7e94167c4bbcac0c67",
+    "normalized": true,
+    "available": true
   },
   "collaborative_model": {
     "available": true,
@@ -25,8 +39,8 @@
       "genre_recovery": 0.8472222222222222,
       "catalog_coverage": 0.002103631532329495,
       "intra_list_diversity": 0.7540175961604533,
-      "latency_p50_ms": 145.0386999931652,
-      "latency_p95_ms": 508.42179999744985,
+      "latency_p50_ms": 227.38280007615685,
+      "latency_p95_ms": 592.2693000175059,
       "unique_recommended_titles": 38
     },
     {
@@ -37,8 +51,8 @@
       "genre_recovery": 0.7638888888888888,
       "catalog_coverage": 0.00387511071744907,
       "intra_list_diversity": 0.5654207608969514,
-      "latency_p50_ms": 3009.2989999975543,
-      "latency_p95_ms": 3414.048000006005,
+      "latency_p50_ms": 3223.816299927421,
+      "latency_p95_ms": 3557.338900049217,
       "unique_recommended_titles": 70
     },
     {
@@ -49,8 +63,8 @@
       "genre_recovery": 0.8055555555555556,
       "catalog_coverage": 0.003819751992914083,
       "intra_list_diversity": 0.8311478116240021,
-      "latency_p50_ms": 3053.9668000128586,
-      "latency_p95_ms": 3356.076199997915,
+      "latency_p50_ms": 3198.6303000012413,
+      "latency_p95_ms": 3642.1254000160843,
       "unique_recommended_titles": 69
     },
     {
@@ -61,8 +75,20 @@
       "genre_recovery": 0.9027777777777778,
       "catalog_coverage": 0.003819751992914083,
       "intra_list_diversity": 0.8354188668474383,
-      "latency_p50_ms": 3020.4274999996414,
-      "latency_p95_ms": 3444.97529999353,
+      "latency_p50_ms": 3207.3453000048175,
+      "latency_p95_ms": 3980.929599958472,
+      "unique_recommended_titles": 69
+    },
+    {
+      "variant": "pretrained_semantic",
+      "hard_filter_satisfaction": 1.0,
+      "entity_constraint_satisfaction": 1.0,
+      "hit_rate_at_k": 0.2,
+      "genre_recovery": 0.9027777777777778,
+      "catalog_coverage": 0.003819751992914083,
+      "intra_list_diversity": 0.7496156577108958,
+      "latency_p50_ms": 3367.699700058438,
+      "latency_p95_ms": 3748.065499938093,
       "unique_recommended_titles": 69
     },
     {
@@ -73,21 +99,21 @@
       "genre_recovery": 0.7361111111111112,
       "catalog_coverage": 0.003598317094774136,
       "intra_list_diversity": 0.7894963766392338,
-      "latency_p50_ms": 3072.295399993891,
-      "latency_p95_ms": 3462.681999997585,
+      "latency_p50_ms": 3533.3065000595525,
+      "latency_p95_ms": 4086.2729999935254,
       "unique_recommended_titles": 65
     },
     {
       "variant": "final_hybrid",
       "hard_filter_satisfaction": 1.0,
       "entity_constraint_satisfaction": 1.0,
-      "hit_rate_at_k": 1.0,
+      "hit_rate_at_k": 0.8,
       "genre_recovery": 0.9027777777777778,
-      "catalog_coverage": 0.00370903454384411,
-      "intra_list_diversity": 0.7368561332847047,
-      "latency_p50_ms": 3149.7480000107316,
-      "latency_p95_ms": 3462.0154999865917,
-      "unique_recommended_titles": 67
+      "catalog_coverage": 0.0037643932683790967,
+      "intra_list_diversity": 0.7281968648635315,
+      "latency_p50_ms": 3509.0115999337286,
+      "latency_p95_ms": 3894.609999959357,
+      "unique_recommended_titles": 68
     }
   ],
   "limitations": [

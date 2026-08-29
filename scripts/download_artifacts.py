@@ -112,14 +112,25 @@ def ensure_artifacts(
             verified.append(destination)
             continue
 
+        # Artifacts marked `required: false` enable an optional channel. The
+        # application runs without them, so a deployment whose dataset repo does
+        # not carry them yet degrades instead of failing to start.
+        optional = metadata.get("required") is False
+
         url = artifact_url(repo_id, revision, filename)
         print(f"downloading {filename} from {repo_id}@{revision}")
         try:
             download(url, destination)
         except (OSError, urllib.error.URLError) as exc:
+            if optional:
+                print(f"skipped optional {filename}: {type(exc).__name__}")
+                continue
             raise RuntimeError(f"Failed to download {filename}: {type(exc).__name__}") from exc
         if not verifies(destination, metadata):
             destination.unlink(missing_ok=True)
+            if optional:
+                print(f"skipped optional {filename}: checksum or size mismatch")
+                continue
             raise RuntimeError(f"Checksum or size validation failed for {filename}")
         print(f"verified {destination.relative_to(PROJECT_ROOT)}")
         verified.append(destination)

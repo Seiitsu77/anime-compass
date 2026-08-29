@@ -17,6 +17,12 @@
       "sha256": "4868cc4344096c834c0414d377773a975bb4e54e825b985da20299c1fafa4a3e",
       "size_bytes": 15044769,
       "required": true
+    },
+    "semantic_embeddings.npz": {
+      "path": "data/processed/semantic_embeddings.npz",
+      "sha256": "76228416fda9bdd552dd741c039242abc44af3bb0ca4fa26ff5bc8b19773a613",
+      "size_bytes": 25773847,
+      "required": false
     }
   }
 }

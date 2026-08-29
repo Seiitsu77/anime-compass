@@ -5,14 +5,36 @@ import re
 import time
 import zlib
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Mapping
 from difflib import SequenceMatcher
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     import numpy as np
 except ImportError:  # The recommender still works without the dense hybrid channels.
-    np = None
+    np = None  # type: ignore[assignment]
+
+
+if TYPE_CHECKING:
+
+    class FloatCounter(Mapping[str, float]):
+        """The subset of Counter used for float-weighted channel vectors.
+
+        At runtime this is collections.Counter, whose additive `update` the
+        profile builders rely on. typeshed models Counter values as int, so the
+        checker gets this float-valued surface instead.
+        """
+
+        def __init__(self, initial: Mapping[str, float] | None = ...) -> None: ...
+        def __getitem__(self, key: str) -> float: ...
+        def __setitem__(self, key: str, value: float) -> None: ...
+        def __iter__(self) -> Iterator[str]: ...
+        def __len__(self) -> int: ...
+        def update(self, other: Mapping[str, float], /) -> None: ...
+        def most_common(self, n: int | None = ...) -> list[tuple[str, float]]: ...
+
+else:
+    FloatCounter = Counter
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -21,11 +43,20 @@ SVD_FEATURES = 384
 SVD_DIMENSIONS = 48
 MODEL_VERSION = "hybrid-collaborative-v4"
 MIN_ENTITY_FREQUENCY_LARGE_CATALOG = 2
+# The semantic channel is retired to an opt-in experiment rather than deleted.
+# At its former 0.14 weight it cost 8.9% relative NDCG@10 and 11.9% relative
+# Recall@10 on 300 held-out users, both bootstrap intervals excluding zero, while
+# buying no coverage or diversity benefit. See
+# data/evaluation/personalized/results/semantic_channel_summary.md.
+# The remaining weights are unchanged and renormalize across active channels, so
+# removing 0.14 redistributes proportionally rather than by a new hand-tune.
+SEMANTIC_EXPERIMENTAL_WEIGHT = 0.14
+
 DEFAULT_CHANNEL_WEIGHTS = {
     "metadata": 0.16,
     "synopsis": 0.10,
     "lsa": 0.04,
-    "semantic_embedding": 0.14,
+    "semantic_embedding": 0.00,
     "dense": 0.08,
     "creator": 0.05,
     "collaborative": 0.22,
@@ -33,6 +64,19 @@ DEFAULT_CHANNEL_WEIGHTS = {
     "session": 0.05,
     "novelty": 0.03,
 }
+
+
+def experimental_semantic_weights(weight: float = SEMANTIC_EXPERIMENTAL_WEIGHT) -> dict[str, float]:
+    """Channel weights with the semantic channel re-enabled for experiments.
+
+    Kept so the retired channel stays measurable: a weight cannot be argued down
+    to zero on evidence unless it can be turned back on and re-measured.
+    """
+    if weight < 0.0:
+        raise ValueError("The experimental semantic weight must be non-negative")
+    return {**DEFAULT_CHANNEL_WEIGHTS, "semantic_embedding": float(weight)}
+
+
 SELECTED_CREATOR_ROLES = {
     "director",
     "original creator",
@@ -267,7 +311,12 @@ def story_themes(text: str | None) -> list[str]:
     return [theme for theme, keywords in STORY_THEMES.items() if tokens.intersection(keywords)]
 
 
-def cosine(a: Counter[str], b: Counter[str], norm_a: float | None = None, norm_b: float | None = None) -> float:
+def cosine(
+    a: Mapping[str, float],
+    b: Mapping[str, float],
+    norm_a: float | None = None,
+    norm_b: float | None = None,
+) -> float:
     if not a or not b:
         return 0.0
 
@@ -284,8 +333,8 @@ def cosine(a: Counter[str], b: Counter[str], norm_a: float | None = None, norm_b
     return dot / (norm_a * norm_b)
 
 
-def dense_embedding(text: str | None, dimensions: int):
-    vector = np.zeros(dimensions, dtype=np.float32)
+def dense_embedding(text: str | None, dimensions: int) -> Any:
+    vector: Any = np.zeros(dimensions, dtype=np.float32)
     tokens = tokenize(text)
 
     for token in tokens:
@@ -303,14 +352,19 @@ def dense_embedding(text: str | None, dimensions: int):
     return vector
 
 
-def add_hashed_feature(vector, feature: str, weight: float) -> None:
+def add_hashed_feature(vector: Any, feature: str, weight: float) -> None:
     bucket_hash = zlib.crc32(feature.encode("utf-8"))
     bucket = bucket_hash % vector.shape[0]
     sign = 1.0 if zlib.crc32(("sign:" + feature).encode("utf-8")) % 2 == 0 else -1.0
     vector[bucket] += weight * sign
 
 
-def normalize_rows(matrix):
+def _rounded(value: Any, digits: int = 6) -> float:
+    """Round a numeric value that arrives from an Any-typed diagnostic payload."""
+    return round(float(value), digits)
+
+
+def normalize_rows(matrix: Any) -> Any:
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
     return np.divide(matrix, norms, out=np.zeros_like(matrix), where=norms > 0)
 
@@ -400,7 +454,7 @@ class AnimeRecommender:
         self.embedding_vectors = self._build_embedding_index()
         self.svd_features: list[str] = []
         self.svd_feature_index: dict[str, int] = {}
-        self.svd_components = None
+        self.svd_components: Any = None
         self.svd_vectors = self._build_svd_index()
 
     def model_info(self) -> dict[str, Any]:
@@ -426,7 +480,7 @@ class AnimeRecommender:
 
     def meta(self) -> dict[str, Any]:
         genres = sorted({genre for item in self.catalog for genre in item.get("genres", [])})
-        media_types = sorted({item.get("type") for item in self.catalog if item.get("type")})
+        media_types = sorted({str(item["type"]) for item in self.catalog if item.get("type")})
         years = [item["start_year"] for item in self.catalog if item.get("start_year")]
         genre_covers: dict[str, str] = {}
 
@@ -550,7 +604,7 @@ class AnimeRecommender:
                 + item.get("voice_actors", [])[:8]
             ]
             studios = [normalize_label(value) for value in item.get("studios", [])]
-            story_vector = self.story_vectors.get(int(item["id"]), {})
+            story_vector: Mapping[str, float] = self.story_vectors.get(int(item["id"])) or {}
 
             score = 0.0
             matched_fields: set[str] = set()
@@ -810,8 +864,17 @@ class AnimeRecommender:
         top_k: int | None = None,
         diagnostics: dict[str, Any] | None = None,
         include_explanations: bool = True,
+        include_score_breakdown: bool | None = None,
     ) -> list[dict[str, Any]]:
+        """Rank the catalog.
+
+        ``include_score_breakdown`` defaults to ``include_explanations``. Set it
+        independently to get per-channel scores without paying for natural
+        language reason strings, which is what offline weight fitting needs.
+        """
         recommend_started = time.perf_counter()
+        if include_score_breakdown is None:
+            include_score_breakdown = include_explanations
         session_profile = session_profile or {}
         if top_k is not None:
             limit = top_k
@@ -927,9 +990,9 @@ class AnimeRecommender:
         format_keys = {value.casefold() for value in formats or [] if value}
         if media_type:
             format_keys.add(media_type.casefold())
-        profile = Counter()
-        story_profile = Counter()
-        creator_profile = Counter()
+        profile: FloatCounter = FloatCounter()
+        story_profile: FloatCounter = FloatCounter()
+        creator_profile: FloatCounter = FloatCounter()
         embedding_profile = None
         svd_profile = None
         semantic_profile = None
@@ -1143,7 +1206,7 @@ class AnimeRecommender:
                 "novelty": positive_score(self._novelty_score(item, novelty_preference)),
             }
             total = sum(effective_weights[channel] * signals[channel] for channel in configured_weights)
-            if include_explanations:
+            if include_score_breakdown:
                 breakdown = {
                     channel: {
                         "raw_score": round(signals[channel], 6),
@@ -1156,6 +1219,9 @@ class AnimeRecommender:
                     }
                     for channel in configured_weights
                 }
+            else:
+                breakdown = {}
+            if include_explanations:
                 reasons = self.explain(
                     item,
                     liked_ids=liked_ids,
@@ -1179,7 +1245,6 @@ class AnimeRecommender:
                     matched_required_entities=matched_entity_relationships,
                 )
             else:
-                breakdown = {}
                 reasons = []
             scored.append((total, item, reasons, signals, breakdown))
 
@@ -1189,7 +1254,7 @@ class AnimeRecommender:
             3,
         )
 
-        results = []
+        results: list[dict[str, Any]] = []
         selected_items: list[dict[str, Any]] = []
         seen_series: set[str] = (
             {series_key(self.by_id[anime_id]["title"]) for anime_id in blocked_set if anime_id in self.by_id}
@@ -1198,14 +1263,25 @@ class AnimeRecommender:
         )
 
         reranking_started = time.perf_counter()
+        # Greedy diversity reranking rescans a candidate window for every slot,
+        # which is quadratic in `limit`. With no diversity pressure the window
+        # scan cannot change the answer -- `scored` is already sorted and the
+        # penalty is multiplied by zero -- so take candidates in order instead.
+        # This keeps large-`limit` callers (offline weight fitting) tractable.
+        rerank_for_diversity = diversity_strength > 0.0
+        rerank_window = max(limit * 8, 40)
         while scored and len(results) < limit:
-            best_index = 0
-            best_score = -1.0
-            for index, (score, item, _reasons, _signals, _breakdown) in enumerate(scored[: max(limit * 8, 40)]):
-                adjusted = score - diversity_strength * self._diversity_penalty(item, selected_items)
-                if adjusted > best_score:
-                    best_score = adjusted
-                    best_index = index
+            if rerank_for_diversity:
+                best_index = 0
+                best_score = -1.0
+                for index in range(min(rerank_window, len(scored))):
+                    score, item, _reasons, _signals, _breakdown = scored[index]
+                    adjusted = score - diversity_strength * self._diversity_penalty(item, selected_items)
+                    if adjusted > best_score:
+                        best_score = adjusted
+                        best_index = index
+            else:
+                best_index = 0
 
             score, item, reasons, signals, breakdown = scored.pop(best_index)
             if one_per_series:
@@ -1215,7 +1291,14 @@ class AnimeRecommender:
                 seen_series.add(series)
 
             if not include_explanations:
-                results.append({"id": int(item["id"])})
+                # Ranking-only payload. The channel breakdown is included when
+                # asked for so offline weight fitting can read the same signals
+                # the scorer blended, without building the full public item or
+                # generating reason strings.
+                row: dict[str, Any] = {"id": int(item["id"])}
+                if include_score_breakdown:
+                    row["score_breakdown"] = {"channels": breakdown}
+                results.append(row)
                 selected_items.append(item)
                 continue
 
@@ -1236,7 +1319,7 @@ class AnimeRecommender:
             public["configured_weights"] = {channel: round(value, 6) for channel, value in configured_weights.items()}
             public["effective_weights"] = {channel: round(value, 6) for channel, value in effective_weights.items()}
             public["weighted_contributions"] = {
-                channel: round(breakdown[channel]["weighted_contribution"], 6) for channel in configured_weights
+                channel: _rounded(breakdown[channel]["weighted_contribution"]) for channel in configured_weights
             }
             public["pre_diversity_score"] = round(score, 6)
             public["diversity_adjustment"] = round(diversity_adjustment, 6)
@@ -1623,7 +1706,7 @@ class AnimeRecommender:
         for studio in item.get("studios", []):
             if normalize_label(studio) not in required_studio_keys:
                 continue
-            company = next(
+            company: dict[str, Any] = next(
                 (
                     value
                     for value in studio_relationships
@@ -1673,7 +1756,7 @@ class AnimeRecommender:
             if entity_type == "studio":
                 add("studio", name, entity_id, relationship="studio")
             elif entity_type == "producer":
-                producer = next(
+                producer: dict[str, Any] = next(
                     (
                         value
                         for value in item.get("producer_relationships", [])
@@ -1689,28 +1772,28 @@ class AnimeRecommender:
                     role=producer.get("role") or "Producer",
                 )
             elif entity_type in {"staff", "director", "original_creator"}:
-                person = next(
+                credited_person: dict[str, Any] = next(
                     (value for value in staff_relationships if normalize_label(value.get("name")) == name_key),
                     {},
                 )
                 add(
                     entity_type,
                     name,
-                    entity_id or person.get("id"),
+                    entity_id or credited_person.get("id"),
                     relationship="staff_credit",
-                    role=person.get("role") or entity_type.replace("_", " ").title(),
+                    role=credited_person.get("role") or entity_type.replace("_", " ").title(),
                 )
             elif entity_type == "character":
-                character_record = next(
+                matched_character: dict[str, Any] = next(
                     (value for value in character_relationships if normalize_label(value.get("name")) == name_key),
                     {},
                 )
                 add(
                     "character",
                     name,
-                    entity_id or character_record.get("id"),
+                    entity_id or matched_character.get("id"),
                     relationship="character_appearance",
-                    role=character_record.get("role"),
+                    role=matched_character.get("role"),
                 )
             elif entity_type == "voice_actor":
                 for actor_role in matched_voice_actor_roles:
@@ -1779,9 +1862,9 @@ class AnimeRecommender:
                 continue
             label = entity_type.replace("_", " ")
             detail = str(relationship.get("name") or "")
-            role = relationship.get("role")
-            if role:
-                detail += f" ({role})"
+            role_label = relationship.get("role")
+            if role_label:
+                detail += f" ({role_label})"
             reasons.append(f"Verified {label} relationship: {detail}.")
 
         if selected:
@@ -1988,8 +2071,8 @@ class AnimeRecommender:
             "voice_actors": item.get("voice_actors", [])[:people_limit],
         }
 
-    def _build_metadata_vector(self, item: dict[str, Any]) -> Counter[str]:
-        vector: Counter[str] = Counter()
+    def _build_metadata_vector(self, item: dict[str, Any]) -> FloatCounter:
+        vector: FloatCounter = FloatCounter()
 
         for token in item.get("metadata_tokens", []):
             token_key = normalize_label(str(token).replace("_", " "))
@@ -2038,8 +2121,8 @@ class AnimeRecommender:
 
         return vector
 
-    def _build_creator_vector(self, item: dict[str, Any]) -> Counter[str]:
-        vector: Counter[str] = Counter()
+    def _build_creator_vector(self, item: dict[str, Any]) -> FloatCounter:
+        vector: FloatCounter = FloatCounter()
 
         for studio in item.get("studios", []):
             if self.studio_counts[studio] < self.min_entity_frequency:
@@ -2076,8 +2159,8 @@ class AnimeRecommender:
                 selected.append(person)
         return selected
 
-    def _build_story_vector(self, item: dict[str, Any]) -> Counter[str]:
-        vector: Counter[str] = Counter()
+    def _build_story_vector(self, item: dict[str, Any]) -> FloatCounter:
+        vector: FloatCounter = FloatCounter()
 
         for token in tokenize(item.get("title")):
             vector[token] += 1.6
@@ -2094,7 +2177,7 @@ class AnimeRecommender:
         if np is None:
             return None
 
-        matrix = np.zeros((len(self.catalog), EMBEDDING_DIMENSIONS), dtype=np.float32)
+        matrix: Any = np.zeros((len(self.catalog), EMBEDDING_DIMENSIONS), dtype=np.float32)
         for index, item in enumerate(self.catalog):
             matrix[index] = dense_embedding(story_text(item), EMBEDDING_DIMENSIONS)
 
@@ -2112,7 +2195,7 @@ class AnimeRecommender:
         if not self.svd_features:
             return None
 
-        matrix = np.zeros((len(self.catalog), len(self.svd_features)), dtype=np.float32)
+        matrix: Any = np.zeros((len(self.catalog), len(self.svd_features)), dtype=np.float32)
         self.svd_feature_index = {feature: index for index, feature in enumerate(self.svd_features)}
 
         for row, anime_id in enumerate(self.item_ids):
@@ -2137,11 +2220,11 @@ class AnimeRecommender:
         latent = matrix @ self.svd_components
         return normalize_rows(latent)
 
-    def _story_dense_vector(self, vector: Counter[str]):
+    def _story_dense_vector(self, vector: Mapping[str, float]):
         if np is None or not self.svd_features:
             return None
 
-        dense = np.zeros(len(self.svd_features), dtype=np.float32)
+        dense: Any = np.zeros(len(self.svd_features), dtype=np.float32)
         for feature, value in vector.items():
             column = self.svd_feature_index.get(feature)
             if column is not None:
@@ -2188,7 +2271,7 @@ class AnimeRecommender:
 
         return normalize_vector(np.sum(np.vstack(vectors), axis=0))
 
-    def _svd_profile(self, liked_ids: list[int], story_profile: Counter[str]):
+    def _svd_profile(self, liked_ids: list[int], story_profile: Mapping[str, float]) -> Any:
         if np is None or self.svd_vectors is None or self.svd_components is None:
             return None
 
@@ -2209,7 +2292,7 @@ class AnimeRecommender:
 
         return normalize_vector(np.sum(np.vstack(vectors), axis=0))
 
-    def _build_idf(self, vectors: Iterable[Counter[str]]) -> dict[str, float]:
+    def _build_idf(self, vectors: Iterable[Mapping[str, float]]) -> dict[str, float]:
         document_frequency: Counter[str] = Counter()
         total = max(len(self.catalog), 1)
 
@@ -2218,13 +2301,13 @@ class AnimeRecommender:
 
         return {key: math.log((1 + total) / (1 + frequency)) + 1.0 for key, frequency in document_frequency.items()}
 
-    def _apply_idf(self, vector: Counter[str], idf: dict[str, float] | None = None) -> Counter[str]:
+    def _apply_idf(self, vector: FloatCounter, idf: dict[str, float] | None = None) -> FloatCounter:
         idf = idf or self.idf
-        return Counter({key: value * idf.get(key, 1.0) for key, value in vector.items()})
+        return FloatCounter({key: value * idf.get(key, 1.0) for key, value in vector.items()})
 
     def _add_profile_feature(
         self,
-        profile: Counter[str],
+        profile: FloatCounter,
         key: str,
         weight: float,
         idf: dict[str, float] | None = None,
