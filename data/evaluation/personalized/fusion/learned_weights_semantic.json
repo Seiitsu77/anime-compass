@@ -1,0 +1,81 @@
+{
+  "artifact_version": 1,
+  "baseline_weights": {
+    "collaborative": 0.22,
+    "creator": 0.05,
+    "dense": 0.08,
+    "lsa": 0.04,
+    "metadata": 0.16,
+    "novelty": 0.03,
+    "quality": 0.13,
+    "semantic_embedding": 0.0,
+    "session": 0.05,
+    "synopsis": 0.1
+  },
+  "channel_difference_variance": {
+    "collaborative": 0.017671274603639407,
+    "creator": 0.02946027486025056,
+    "dense": 0.008924508500271629,
+    "lsa": 0.021959404287256207,
+    "metadata": 0.017589713807956167,
+    "novelty": 0.0,
+    "quality": 0.004507708191577621,
+    "semantic_embedding": 0.017260045797967596,
+    "session": 0.00798955471948528,
+    "synopsis": 0.009681120054535558
+  },
+  "channels": [
+    "metadata",
+    "synopsis",
+    "lsa",
+    "semantic_embedding",
+    "dense",
+    "creator",
+    "collaborative",
+    "quality",
+    "session",
+    "novelty"
+  ],
+  "final_loss": 0.673512921053593,
+  "initial_loss": 0.6811731629362457,
+  "initial_weights": {
+    "collaborative": 0.22,
+    "creator": 0.05,
+    "dense": 0.08,
+    "lsa": 0.04,
+    "metadata": 0.16,
+    "novelty": 0.03,
+    "quality": 0.13,
+    "semantic_embedding": 0.14,
+    "session": 0.05,
+    "synopsis": 0.1
+  },
+  "iterations": 800,
+  "l2": 0.001,
+  "learning_rate": 0.5,
+  "method": "pairwise RankNet-style logistic fit with non-negative projection",
+  "pairs": 27912,
+  "pairwise_accuracy": 0.7192247062195471,
+  "positives_covered": 3489,
+  "positives_missed": 2557,
+  "reserved_user_count": 2106,
+  "semantic_index_available": true,
+  "split_sha256": "a668114f043a54dc7048dddc8d5290416579b0eda5abbddc14bc47065c970038",
+  "trained_at_unix": 1787943018,
+  "users": 571,
+  "weights": {
+    "collaborative": 0.3392581428556989,
+    "creator": 0.2404163719354588,
+    "dense": 0.0017774181249902887,
+    "lsa": 0.0,
+    "metadata": 0.11646927652932038,
+    "novelty": 1.2120695281730858e-16,
+    "quality": 0.11226922902382841,
+    "semantic_embedding": 0.029435853855633746,
+    "session": 0.1492392359482979,
+    "synopsis": 0.011134471726771435
+  },
+  "zero_variance_channels": [
+    "novelty"
+  ]
+}
