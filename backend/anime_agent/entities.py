@@ -139,9 +139,10 @@ class EntityResolver:
                 identified_by_name[key[:2]].append(record)
 
         for anonymous_key in anonymous_keys:
-            record = grouped.get(anonymous_key)
-            if record is None:
+            candidate = grouped.get(anonymous_key)
+            if candidate is None:
                 continue
+            record = candidate
             identified = identified_by_name.get(anonymous_key[:2], [])
             if len(identified) == 1:
                 identified[0].related_anime_ids.update(record.related_anime_ids)

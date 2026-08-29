@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 LIGHTFM_ARTIFACT_VERSION = 1
 
@@ -161,13 +162,13 @@ class LightFMServingIndex:
             return []
         scores = self.scores_for_user(user_id).copy()
         known = np.asarray(sorted({int(value) for value in known_ids}), dtype=np.int64)
-        candidate_mask = np.ones(len(self.anime_ids), dtype=bool)
+        candidate_mask: npt.NDArray[Any] = np.ones(len(self.anime_ids), dtype=bool)
         if len(known):
-            rows = np.searchsorted(self.anime_ids, known)
+            rows: npt.NDArray[Any] = np.searchsorted(self.anime_ids, known)
             valid = rows < len(self.anime_ids)
             rows = rows[valid]
             known = known[valid]
-            rows = rows[self.anime_ids[rows] == known]
+            rows = rows[np.asarray(self.anime_ids)[rows] == known]
             candidate_mask[rows] = False
         candidates = np.flatnonzero(candidate_mask)
         order = np.lexsort((self.anime_ids[candidates], -scores[candidates]))

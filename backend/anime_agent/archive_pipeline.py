@@ -54,7 +54,7 @@ def _split_labels(value: object) -> list[str]:
     text = fix_text(value)
     if not text or text.casefold() == "unknown":
         return []
-    return dedupe(clean_label(part) for part in text.split(",") if clean_label(part))
+    return dedupe([clean_label(part) for part in text.split(",") if clean_label(part)])
 
 
 def _parse_year(*values: object) -> int | None:

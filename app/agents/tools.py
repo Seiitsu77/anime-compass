@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -216,7 +216,13 @@ class CatalogToolRegistry:
                 parsed = self.argument_models[tool].model_validate(arguments)
             except ValueError as exc:
                 raise ToolContractError(f"Invalid arguments for {tool}") from exc
-            validated.append(ValidatedToolCall(tool=tool, arguments=parsed.model_dump(exclude_none=True)))
+            # `tool` is checked against argument_models above, so it is a known tool name.
+            validated.append(
+                ValidatedToolCall(
+                    tool=cast(ToolName, tool),
+                    arguments=parsed.model_dump(exclude_none=True),
+                )
+            )
 
         plan = self.plan(intent)
         executed = {call.tool for call in validated}

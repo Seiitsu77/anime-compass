@@ -4,19 +4,39 @@ import json
 import os
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 class OllamaUnavailable(RuntimeError):
     pass
 
 
+@runtime_checkable
+class ChatClient(Protocol):
+    """The provider surface AnimeAgent depends on.
+
+    Callers may supply any object with these members, including the
+    deterministic no-LLM stand-in used when no provider is configured.
+    `chat`/`chat_json` are reached only when `is_available()` returns True.
+    """
+
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def base_url(self) -> str: ...
+
+    def is_available(self) -> bool: ...
+
+    def chat(self, messages: list[dict[str, str]]) -> str: ...
+
+
 class OllamaClient:
     def __init__(self, base_url: str | None = None, model: str | None = None, timeout: float = 45.0):
-        base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-        model = model or os.getenv("OLLAMA_MODEL", "gemma3:12b")
-        self.base_url = base_url.rstrip("/")
-        self.model = model
+        resolved_base_url: str = base_url or os.getenv("OLLAMA_BASE_URL") or "http://127.0.0.1:11434"
+        resolved_model: str = model or os.getenv("OLLAMA_MODEL") or "gemma3:12b"
+        self.base_url: str = resolved_base_url.rstrip("/")
+        self.model: str = resolved_model
         self.timeout = timeout
 
     def is_available(self) -> bool:

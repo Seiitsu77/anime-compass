@@ -15,7 +15,7 @@ from .intent import (
     intent_parser_prompt,
     parse_structured_intent,
 )
-from .ollama_client import OllamaClient, OllamaUnavailable
+from .ollama_client import ChatClient, OllamaClient, OllamaUnavailable
 from .recommender import AnimeRecommender, series_key, tokenize
 
 SYSTEM_PROMPT = """You are Anime Compass, a friendly and proactive local anime guide.
@@ -196,7 +196,7 @@ GENRE_ALIASES = {
     "curses": "Supernatural",
 }
 
-TITLE_ALIASES = {}
+TITLE_ALIASES: dict[str, str] = {}
 
 GENERIC_TITLE_TOKENS = {
     "anime",
@@ -248,12 +248,12 @@ class AnimeAgent:
     def __init__(
         self,
         recommender: AnimeRecommender,
-        client: OllamaClient | None = None,
+        client: ChatClient | None = None,
         get_session_profile: Callable[[str | None], dict[str, Any]] | None = None,
         update_session_preferences: Callable[[str | None, dict[str, Any]], dict[str, Any]] | None = None,
     ):
         self.recommender = recommender
-        self.client = client or OllamaClient()
+        self.client: ChatClient = client if client is not None else OllamaClient()
         self.entity_resolver = EntityResolver(recommender.catalog)
         self.get_session_profile = get_session_profile or (lambda _session_id: {})
         self.update_session_preferences = update_session_preferences or (lambda _session_id, _patch: {})
@@ -493,7 +493,14 @@ class AnimeAgent:
         history: list[dict[str, str]],
         session_id: str | None,
         session: dict[str, Any],
+        relaxed_fields: frozenset[str] = frozenset(),
     ) -> dict[str, Any]:
+        """Answer a structured intent.
+
+        ``relaxed_fields`` names constraints a caller has deliberately dropped
+        during replanning. Those are not re-derived from the raw message, which
+        would otherwise reinstate the very filter that produced no results.
+        """
         context_error = self._materialize_result_references(intent, message, session)
         if context_error:
             return {
@@ -502,7 +509,7 @@ class AnimeAgent:
                 "trace": [],
                 "agent": self.status(),
             }
-        self._normalize_explicit_request(intent, message)
+        self._normalize_explicit_request(intent, message, relaxed_fields)
         if self._looks_like_series_lookup_request(message):
             intent.intent = "search"
             return self._respond_with_title_family(intent, message)
@@ -525,8 +532,18 @@ class AnimeAgent:
             }
         return self._conversational_response(message, history)
 
-    def _normalize_explicit_request(self, intent: StructuredIntent, message: str) -> None:
-        """Make literal user constraints authoritative over probabilistic parsing."""
+    def _normalize_explicit_request(
+        self,
+        intent: StructuredIntent,
+        message: str,
+        relaxed_fields: frozenset[str] = frozenset(),
+    ) -> None:
+        """Make literal user constraints authoritative over probabilistic parsing.
+
+        Fields listed in ``relaxed_fields`` are exempt: a replanning caller has
+        already decided to drop them, so re-reading them from the message would
+        undo the relaxation.
+        """
         explicit_formats = self._matched_formats(message)
         include_genres, exclude_genres = self._matched_genre_constraints(message)
         requested_limit = self._requested_limit(message)
@@ -543,19 +560,21 @@ class AnimeAgent:
             valid_genres[value.casefold()] for value in intent.exclude_genres if value.casefold() in valid_genres
         ]
         if include_genres or exclude_genres:
-            intent.include_genres = include_genres
-            intent.exclude_genres = exclude_genres
-        if explicit_formats:
+            if "include_genres" not in relaxed_fields:
+                intent.include_genres = include_genres
+            if "exclude_genres" not in relaxed_fields:
+                intent.exclude_genres = exclude_genres
+        if explicit_formats and "formats" not in relaxed_fields:
             intent.formats = explicit_formats
         if requested_limit is not None:
             intent.top_k = requested_limit
-        if min_score is not None:
+        if min_score is not None and "min_score" not in relaxed_fields:
             intent.min_score = min_score
-        if min_year is not None:
+        if min_year is not None and "min_year" not in relaxed_fields:
             intent.min_year = min_year
-        if max_year is not None:
+        if max_year is not None and "max_year" not in relaxed_fields:
             intent.max_year = max_year
-        if max_episodes is not None:
+        if max_episodes is not None and "max_episodes" not in relaxed_fields:
             intent.max_episodes = max_episodes
 
         explicitly_excluded = self._explicitly_excluded_titles(message)
@@ -1639,11 +1658,11 @@ class AnimeAgent:
         }
         for entity_type in entity_types:
             for name in self._named_catalog_entities(message, entity_type):
-                key = (entity_type, self._entity_name_key(name))
-                if key in direct_existing:
+                direct_key = (entity_type, self._entity_name_key(name))
+                if direct_key in direct_existing:
                     continue
                 intent.entity_mentions.append(EntityMention(name, entity_type, "direct"))
-                direct_existing.add(key)
+                direct_existing.add(direct_key)
 
     def _unresolved_entity_is_explicit(self, value: str, entity_type: str, message: str) -> bool:
         value_key = self._entity_name_key(value)
@@ -2846,7 +2865,7 @@ class AnimeAgent:
         return {"results": results, "diagnostics": diagnostics}
 
     def _tool_details(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        anime_id = int(arguments.get("anime_id"))
+        anime_id = int(arguments["anime_id"])
         return {"result": self.recommender.details(anime_id)}
 
     def _tool_update_session(self, arguments: dict[str, Any]) -> dict[str, Any]:

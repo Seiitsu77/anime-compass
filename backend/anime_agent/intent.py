@@ -360,7 +360,7 @@ def _string_list(value: Any, field_name: str) -> list[str]:
         return []
     if not isinstance(value, list):
         raise IntentValidationError(f"{field_name} must be an array")
-    result = []
+    result: list[Any] = []
     for item in value:
         if not isinstance(item, str):
             raise IntentValidationError(f"{field_name} must contain only strings")

@@ -365,9 +365,9 @@ def build_catalog(raw_dir: Path) -> list[dict[str, Any]]:
     for row in character_rows:
         anime_id = to_int(row.get("anime_id"))
         character_id = to_int(row.get("character_id"))
-        role = normalize_character_role(row.get("role"))
+        character_role = normalize_character_role(row.get("role"))
 
-        if anime_id is None or character_id is None or role is None:
+        if anime_id is None or character_id is None or character_role is None:
             continue
 
         card = entity_card(character_id, entities)
