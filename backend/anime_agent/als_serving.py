@@ -31,6 +31,14 @@ from typing import Any
 import numpy as np
 
 ALS_ARTIFACT_VERSION = 1
+
+# An artifact declares which job it is for. The evaluation artifact withholds
+# each user's held-out positives and backs every published metric; the
+# production artifact trains on everything and is invalid for measuring.
+# Serving the wrong one is silent and consequential in both directions, so the
+# role is checked rather than assumed.
+ARTIFACT_ROLE_EVALUATION = "evaluation"
+ARTIFACT_ROLE_PRODUCTION = "production"
 # Minimum catalog overlap before an artifact is considered usable. A small
 # amount of drift is expected as the catalog gains titles; a large amount means
 # the artifact belongs to a different catalog and must not be served.
@@ -39,6 +47,19 @@ MINIMUM_CATALOG_OVERLAP = 0.90
 
 class ALSArtifactError(RuntimeError):
     """Raised when an ALS artifact cannot be served faithfully."""
+
+
+class ALSArtifactRoleError(ALSArtifactError):
+    """Raised when an artifact is for a different job than the caller wants."""
+
+
+class ALSCatalogMismatchError(ALSArtifactError):
+    """Raised when an artifact does not describe the active catalog.
+
+    Separate from the generic error because this is the condition that must
+    produce a high-severity degradation event rather than a quiet fallback: it
+    means the served catalog moved out from under the model.
+    """
 
 
 class ALSCollaborativeIndex:
@@ -86,6 +107,8 @@ class ALSCollaborativeIndex:
         *,
         quality_source: Any | None = None,
         expected_artifact_sha256: str | None = None,
+        expected_role: str | None = None,
+        expected_catalog_ids_sha256: str | None = None,
     ) -> ALSCollaborativeIndex:
         """Load and validate an artifact, or raise.
 
@@ -119,6 +142,15 @@ class ALSCollaborativeIndex:
                 f"Unsupported ALS artifact version: {metadata.get('artifact_version')!r} "
                 f"(expected {ALS_ARTIFACT_VERSION})"
             )
+
+        # Artifacts written before roles existed are evaluation builds.
+        role = str(metadata.get("artifact_role") or ARTIFACT_ROLE_EVALUATION)
+        if expected_role is not None and role != expected_role:
+            raise ALSArtifactRoleError(
+                f"ALS artifact role mismatch for {path.name}: expected {expected_role!r}, got {role!r}. "
+                "Evaluation artifacts withhold held-out positives and must not serve production; "
+                "production artifacts train on everything and must not produce holdout metrics."
+            )
         if item_factors.ndim != 2 or item_factors.shape[0] != len(anime_ids):
             raise ALSArtifactError("ALS item factors are not aligned with anime IDs")
         if not len(anime_ids):
@@ -132,13 +164,25 @@ class ALSCollaborativeIndex:
         overlap = sum(int(value) in catalog_ids for value in anime_ids.tolist())
         ratio = overlap / len(anime_ids)
         if ratio < MINIMUM_CATALOG_OVERLAP:
-            raise ALSArtifactError(
+            raise ALSCatalogMismatchError(
                 f"ALS artifact does not match the active catalog: {ratio:.1%} overlap "
-                f"(minimum {MINIMUM_CATALOG_OVERLAP:.0%})"
+                f"(minimum {MINIMUM_CATALOG_OVERLAP:.0%}); "
+                f"artifact has {len(anime_ids)} items, catalog has {len(catalog_ids)}"
             )
+
+        # A pinned catalog digest is exact where the overlap ratio is fuzzy: it
+        # catches a catalog that drifted while still overlapping heavily.
+        if expected_catalog_ids_sha256:
+            actual_catalog = catalog_ids_digest(sorted(catalog_ids))
+            if actual_catalog != expected_catalog_ids_sha256:
+                raise ALSCatalogMismatchError(
+                    f"Catalog identity mismatch for {path.name}: "
+                    f"expected {expected_catalog_ids_sha256[:16]}..., got {actual_catalog[:16]}..."
+                )
 
         metadata["artifact_sha256"] = sha256_file(path)
         metadata["catalog_overlap"] = round(ratio, 6)
+        metadata["artifact_role"] = role
         return cls(anime_ids, item_factors, metadata, quality_source=quality_source)
 
     def _gram(self) -> np.ndarray:
@@ -234,14 +278,30 @@ class ALSCollaborativeIndex:
             "regularization": self.regularization,
             "iterations": self.metadata.get("iterations"),
             "artifact_version": ALS_ARTIFACT_VERSION,
+            "artifact_role": self.metadata.get("artifact_role"),
             "artifact_sha256": self.metadata.get("artifact_sha256"),
             "split_sha256": self.metadata.get("split_sha256"),
+            "ratings_sha256": self.metadata.get("ratings_sha256"),
+            "catalog_ids_sha256": self.metadata.get("catalog_ids_sha256"),
             "training_source": self.metadata.get("training_source"),
+            "ratings_used": self.metadata.get("ratings_used"),
+            "valid_for_holdout_evaluation": not bool(self.metadata.get("not_valid_for_holdout_evaluation")),
         }
 
     @property
     def resident_array_bytes(self) -> int:
         return int(self.anime_ids.nbytes + self.item_factors.nbytes)
+
+
+def catalog_ids_digest(anime_ids: Sequence[int]) -> str:
+    """Hash a catalog ID set, matching the trainer's digest exactly."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for value in anime_ids:
+        digest.update(str(int(value)).encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
