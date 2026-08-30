@@ -65,6 +65,42 @@ does not match the split being evaluated.
 268 s wall on CPU for 15 iterations over 308,177 users and 24.9M positive edges.
 Serving artifact is 9.3 MB of float32.
 
+## The production artifact
+
+The evaluation artifact above is trained on the split, which withholds each
+user's held-out positives. That is correct for measuring and wrong for serving.
+A second artifact is built from every positive rating using the **identical**
+frozen hyperparameters.
+
+| | Evaluation | Production |
+|---|---|---|
+| File | `als_train_only.npz` | `data/processed/als_production_item_factors.npz` |
+| `artifact_role` | `evaluation` | `production` |
+| Rows scanned | 57,633,278 | 57,633,278 |
+| Positive interactions | 24,916,911 | **30,875,410** (+23.9%) |
+| Users | 308,177 | 308,177 |
+| Withholds held-out positives | yes | no |
+| Valid for holdout metrics | **yes** | **no** |
+| SHA-256 | `a0be5f3f1dde0a40...` | `95c079b1b8f4e0e5...` |
+| Size on disk | 7.0 MB | 7.1 MB |
+| Build time | 268 s | 312 s |
+
+The production artifact additionally pins `ratings_sha256`
+(`b60519348a90bd5e...`) and `catalog_ids_sha256`
+(`0ab8367a4c8a10a8...`), and carries `not_valid_for_holdout_evaluation: true`.
+
+**The published holdout metrics must never be recomputed against the production
+artifact.** Any holdout scored against it would consist of interactions it
+already trained on. The serving loader enforces this in both directions by
+checking `artifact_role`, so the two cannot be silently swapped.
+
+Rebuild and verify with:
+
+```powershell
+python scripts/build_production_als.py
+python scripts/verify_production_als.py
+```
+
 ## Threshold variants
 
 Thresholds 7 and 9 require their own splits and therefore their own ALS

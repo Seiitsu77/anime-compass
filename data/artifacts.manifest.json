@@ -23,6 +23,12 @@
       "sha256": "76228416fda9bdd552dd741c039242abc44af3bb0ca4fa26ff5bc8b19773a613",
       "size_bytes": 25773847,
       "required": false
+    },
+    "als_production_item_factors.npz": {
+      "path": "data/processed/als_production_item_factors.npz",
+      "sha256": "95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10",
+      "size_bytes": 7393985,
+      "required": false
     }
   }
 }
