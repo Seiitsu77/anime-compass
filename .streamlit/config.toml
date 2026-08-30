@@ -1,0 +1,12 @@
+[server]
+headless = true
+# CORS and XSRF protection are left at their secure defaults. Streamlit
+# Community Cloud terminates TLS and serves the app from a single origin, so
+# there is nothing to relax.
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"
+primaryColor = "#5B8DEF"

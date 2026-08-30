@@ -1,0 +1,4 @@
+# Portfolio demo only. The FastAPI service does not need Streamlit, and the
+# production ALS serving path stays NumPy-only.
+-r requirements.txt
+streamlit>=1.40,<2
