@@ -7,451 +7,219 @@ app_port: 7860
 pinned: false
 ---
 
-# Anime Compass
+# Anime Recommendation System
 
-Anime Compass is a local-first, agentic anime discovery app backed by an 18,064-title catalog. It combines strict entity and metadata filters, an explainable hybrid recommender trained on 56.7 million anonymous ratings, optional semantic embeddings, and anonymous session feedback behind FastAPI and a responsive vanilla JavaScript interface.
+A production-style personalized anime recommender built on 57M+ historical ratings. Pick a few titles you
+like and it ranks the full ~18,000-item catalog against your profile in about two milliseconds, using a tuned
+implicit-feedback ALS model trained on 30.9M positive interactions. The interesting part is not the model — it is
+the evidence trail behind it: every architectural decision here was made by a controlled offline experiment with a
+predeclared decision rule, and several promising ideas were measured, rejected, and documented.
 
-![Anime Compass interface](docs/screenshots/anime-compass-home.png)
+## Live Demo
 
-## What It Demonstrates
+**[Deployment link — see Deployment below to publish]**
 
-- Provider-agnostic Agent orchestration with Gemini and local Ollama/Gemma adapters
-- JSON-schema-constrained intent parsing and typed, deterministic tool routing
-- Exact catalog joins for characters, voice actors, staff, studios, producers, directors, creators, themes, and demographics
-- Hard constraints applied before ranking, with relationship evidence returned per result
-- Reconstructable late fusion over collaborative item embeddings, TF-IDF, LSA, optional pretrained embeddings, metadata, creators, quality, novelty, and session signals
-- Paginated hybrid search, exact studio/format filters, include/exclude constraints, explicit ranking, and preference-aware recommendations
-- Reproducible offline evaluation, tests, CI, Docker, and a CC0 data pipeline
+No login, no account, no API key. Load an example profile, click Recommend, and inspect the model results and
+architecture from the same page.
+
+## Why This Project Is Interesting
+
+- **A real model-selection story, not a single notebook.** Popularity → CountSketch → exact item-item → LightFM →
+  tuned ALS, each compared on identical users with paired bootstrap intervals.
+- **Negative results are first-class.** Pretrained embeddings, learned fusion, and segment-aware routing were all
+  tested and all rejected on evidence. They are documented, not hidden.
+- **The final architecture is simpler than what it replaced**, and that simplification was measured rather than
+  asserted: the previous ten-channel hybrid added no measurable ranking value once ALS was strong.
+- **The evaluation protocol is deliberately hard.** Full-catalog ranking against every held-out positive, not the
+  common one-positive-versus-99-sampled-negatives shortcut.
+- **Production concerns are handled**: artifact checksums, role separation between evaluation and serving models,
+  fail-loud catalog validation, and a NumPy-only serving path.
+
+## Key Results
+
+| | |
+|---|---|
+| Ratings scanned | **57,633,278** |
+| Positive interactions in the production model | **30,875,410** |
+| NDCG@10 vs the previous production architecture | **+42.6%** (paired 95% CI `[+0.0641, +0.0897]`) |
+| Recommendation latency | **~465× lower** (924.6 ms → 2.0 ms p50) |
+| Evaluation protocol | Full ~18,000-item catalog, all held-out positives |
+
+Primary comparison, same 800 held-out users, same protocol:
+
+| Architecture | NDCG@10 | Recall@10 | NDCG@20 | Recall@20 | p50 |
+|---|---:|---:|---:|---:|---:|
+| Old Hybrid + CountSketch | 0.1815 | 0.1682 | 0.2000 | 0.2395 | 924.6 ms |
+| **Fast production ALS** | **0.2588** | **0.2480** | **0.2889** | **0.3572** | **2.0 ms** |
+
+NDCG@10 of 0.2588 is a ranking-quality score against the full catalog, not an accuracy percentage.
+
+## Demo
+
+The demo is a single Streamlit page:
+
+1. **Landing** — headline, three metrics, one-paragraph explanation.
+2. **Pick titles** — four one-click example profiles, plus catalog search.
+3. **Recommendations** — poster cards with year, type, episodes, score, genres, and a grounded explanation
+   naming which of your titles the result actually resembles.
+4. **Under the hood** — collapsible sections for architecture, model results, evaluation protocol, rejected
+   experiments, and deployment health.
+
+_Screenshots: add `docs/screenshots/demo-landing.png` and `docs/screenshots/demo-results.png` after first deploy._
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    CSV["CC0 anime metadata"] --> Pipeline["Cleaning and enrichment migration"]
-    Ratings["56.7M anonymous ratings"] --> Training["User-centred CountSketch training"]
-    Training --> Collaborative["Collaborative item embeddings"]
-    Pipeline --> Catalog["Processed catalog"]
-    Catalog --> Entities["Entity resolver"]
-    Catalog --> Hybrid["Hybrid collaborative/content recommender"]
-    Catalog --> Embeddings["Optional synopsis embedding index"]
-    Collaborative --> Hybrid
-    Embeddings --> Hybrid
-
-    Browser["Vanilla JS UI"] --> API["FastAPI + Pydantic"]
-    API --> Agent["Agent orchestrator"]
-    Agent --> Provider["Gemini or Ollama/Gemma 3"]
-    Provider --> Intent["Validated AgentIntent"]
-    Intent --> Router["Typed tool router"]
-    Router --> Entities
-    Router --> Hybrid
-    API --> Sessions["SQLite session preferences"]
-    Sessions --> Hybrid
-```
-
-The LLM understands language and verbalizes verified results. It never selects final catalog records directly.
-
-## Agent Tool Flow
-
-`AgentIntent` distinguishes six operations:
-
-| Intent | Backend behavior |
-|---|---|
-| `search` | Relevance-oriented catalog/entity lookup |
-| `rank_catalog` | Deterministic filtering and explicit sorting, independent of session taste |
-| `recommend` | Preference-aware hybrid content recommendation |
-| `details` | Catalog-grounded, spoiler-light anime introduction |
-| `update_preferences` | Anonymous session feedback update |
-| `conversation` | No catalog tool execution |
-
 ```text
-user message
-  -> Gemini/Ollama returns structured AgentIntent
-  -> Pydantic validates and normalizes every field
-  -> backend derives an allowlisted tool plan
-  -> backend resolves entities and executes catalog joins/filters
-  -> tool trace is validated against its typed contract
-  -> provider may verbalize only the verified tool payload
-  -> backend rejects ungrounded title lists
+                 User preferences
+                        |
+                        v
+                  Request router
+                    /         \
+           simple request    constrained request
+                 |                    |
+                 v                    v
+          Production ALS          Rich Hybrid
+            fast path           constraint path
+                 \                    /
+                  v                  v
+                    Recommendations
+                          |
+                          v
+                     Explanations
 ```
 
-Available tools are `search_anime`, `search_entities`, `resolve_entity`, `rank_catalog`, `recommend_anime`, `get_anime_details`, and `update_session_preferences`.
+ALS serves the default personalized path. The multi-channel hybrid runs only when a request carries explicit
+constraints — a studio, a voice actor, a year window — that need exact catalog joins. Full detail in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-### Bounded replanning
+## Modeling
 
-A strict filter chain can be over-constrained: "a 2015-only Madhouse isekai under 12 episodes rated above 8.5" is
-a reasonable request that matches no catalog row. When a retrieval intent returns zero rows, the backend replans
-**deterministically** rather than asking the model to retry, which would let it invent titles. Constraints are
-dropped one at a time along a fixed ladder — score floor, episode cap, year bounds, formats, preferred entities,
-excluded genres, required genres — and the tools re-execute. Two invariants hold:
+| Model | NDCG@10 | Recall@10 | Decision |
+|---|---:|---:|---|
+| Random | 0.0008 | 0.0009 | Floor reference |
+| Popularity | 0.1087 | 0.1000 | Baseline |
+| CountSketch (previous production) | 0.1516 | 0.1430 | Replaced |
+| Exact item-item cosine | 0.1650 | 0.1472 | Retained as an optional retrieval source |
+| LightFM-ID | 0.1833 | 0.1589 | Rejected — halved coverage, failed threshold-9 robustness |
+| **Tuned ALS** | **0.2624** | **0.2475** | **Promoted** |
+| Oracle (analytic ceiling) | 1.0000 | 0.8650 | Not deployable; validates the metric |
 
-- **Required entity constraints are never relaxed.** A request pinned to a voice actor, studio, staff member, or
-  character is satisfied exactly or returns nothing. Relaxing those would break the grounding contract.
-- **The loop is bounded** by `MAX_REPLAN_STEPS` (default 2, `0` disables), so cost stays predictable.
+Exact item-item and LightFM-ID were measured on an earlier 1,000-user sample; the rest come from 800-user
+confirmation samples. Populations differ, so cross-row gaps are indicative rather than paired.
 
-Every applied relaxation is recorded and returned on the response as `relaxations`, so the answer can state what
-was loosened instead of silently widening the request.
-
-For a request such as "recommend 7 anime with Yoshitsugu Matsuoka," the backend resolves the voice-actor record, joins its related anime IDs, filters to that verified subset, and only then ranks. Each result includes `matched_voice_actors`, character, language, entity ID, and relationship evidence.
-
-## Recommendation Architecture
-
-The default ranking path is **ALS-first and fast**. The ten-channel hybrid still exists and still runs, but only
-for requests that need deterministic constraint handling. On the same 800 held-out users, full-catalog ranking:
-
-| Architecture | NDCG@10 | Recall@10 | p50 | p95 |
-|---|---:|---:|---:|---:|
-| Hybrid + CountSketch (previous default) | 0.1815 | 0.1682 | 924.6 ms | 1186.3 ms |
-| **Fast ALS path (current default)** | **0.2588** | **0.2480** | **2.0 ms** | **2.7 ms** |
-
-**+42.6% relative NDCG@10 at roughly 1/465th the latency**, paired 95% CI `[+0.0641, +0.0897]`.
-
-```text
-request -> path policy -> [fast: ALS retrieval -> filters -> lightweight ranking]
-                       -> [constraint-rich: entity joins -> hard filters -> hybrid channels]
-```
-
-A request takes the constraint-rich path when it names entities, metadata filters, reference titles, or free-text
-preferences. Otherwise it takes the fast path. Neither path is "better" — they answer different questions, and
-the personalized benchmark never scored what the rich path exists to do.
-
-This was **evidence-driven complexity reduction**, not feature removal:
-
-- ALS beat CountSketch robustly across rating thresholds 7, 8, and 9 (+59% to +87% relative NDCG@10).
-- Substituting ALS into the hybrid gave no measurable ranking gain over standalone ALS (interval includes zero)
-  for 125x the latency.
-- ALS alone has **zero** mid-tail and long-tail exposure, so CountSketch and item-item are retained as
-  complementary sources rather than deleted.
-
-Full detail, routing rules, and configuration are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-## Recommendation Model
-
-The constraint-rich path uses a **multi-channel hybrid collaborative/content recommender with session-based
-personalization**. The fast default path uses ALS retrieval plus a lightweight rank-and-quality blend; the table
-below describes the hybrid.
-
-| Channel | Default weight | Source |
-|---|---:|---|
-| Metadata TF-IDF | 0.16 | genres, format, studios, people, catalog labels |
-| Synopsis TF-IDF | 0.10 | synopsis terms and story themes |
-| LSA | 0.04 | deterministic truncated decomposition of content features |
-| Pretrained semantic | 0.14 | optional normalized `all-MiniLM-L6-v2` vectors |
-| Hashed dense text | 0.08 | local token, character n-gram, and bigram features |
-| Creator similarity | 0.05 | studios and selected staff roles |
-| Collaborative | 0.22 | user-centred item vectors from completed-title ratings |
-| Quality prior | 0.13 | Bayesian rating mean, aggregate score, members, and popularity |
-| Session signal | 0.05 | anonymous likes, dislikes, watched titles, and preferences |
-| Novelty | 0.03 | mainstream or less-famous preference |
-
-Weights are renormalized across channels that are active for a request. Hard filters and required entity relationships are applied first.
-
-> **The 0.14 semantic weight is not supported by evidence and is scheduled for removal.** That channel had never
-> been built or measured. With the artifact built and the channel active, the hybrid loses 8.9% relative NDCG@10
-> and 11.9% relative Recall@10 on 300 held-out users, both intervals excluding zero. See the
-> [semantic channel report](data/evaluation/personalized/results/semantic_channel_summary.md).
-
-```text
-effective_weight[c] = configured_weight[c] / sum(configured weights of active channels)
-pre_diversity_score = sum(effective_weight[c] * normalized_score[c])
-final_score = pre_diversity_score + diversity_adjustment
-```
-
-Every API recommendation exposes raw channel scores, configured and effective weights, weighted contributions, and the final diversity adjustment. The collaborative artifact uses randomized user-dimension projections to approximate adjusted-cosine item similarity; it is not mislabeled content LSA or matrix-factorization SVD.
-
-### Collaborative Artifact
-
-`rating_complete.csv` contains only completed-and-rated titles. Training user-centres each rating vector and projects the sparse user dimension into three independently signed CountSketch blocks. The web process loads only normalized item vectors and Bayesian item statistics, not the 818 MB interaction file.
-
-```powershell
-python scripts/build_collaborative_model.py
-```
-
-The generated artifact contains 18,064 aligned IDs, 384-dimensional vectors, and statistics learned from 56,726,861 in-scope ratings across 310,059 users. Startup validates version, shape, finite values, score ranges, unique IDs, and catalog overlap.
-
-### Semantic Artifact
-
-The optional semantic provider is `sentence-transformers/all-MiniLM-L6-v2`, pinned to revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`. A semantic artifact stores normalized 384-dimensional vectors plus model, preprocessing, ID-map, and catalog-checksum metadata. Startup rejects stale or incompatible artifacts rather than silently using them.
-
-The artifact is listed in `data/artifacts.manifest.json` as `required: false`, so a deployment whose dataset repo
-does not carry it starts anyway and serves the remaining channels rather than failing.
-
-Build or verify it with:
-
-```powershell
-python scripts/build_semantic_embeddings.py --force
-python scripts/build_semantic_embeddings.py --verify-only --offline
-```
+Tuning mattered more than architecture: stock ALS defaults scored 0.1841, and a validation-only sweep over
+`alpha` and factor count took the same model family to 0.2624 — **+42.6% from hyperparameters alone**.
 
 ## Evaluation
 
-There are two deliberately separate evaluation layers:
+Every headline number ranks each user's held-out favourites against the **full ~18,000-item catalog**. This is
+substantially harder than the common protocol of one positive against 99 sampled negatives, where the same model
+scores NDCG@10 **0.826**. That figure is reported only as a comparability diagnostic and never used to select a
+model.
 
-- The existing seven-case benchmark protects catalog constraints, agent routing, and qualitative recommendation
-  behavior.
-- The personalized offline benchmark uses a deterministic, leakage-safe per-user positive holdout over the
-  anonymous rating archive. It compares train-only popularity, CountSketch CF, exact item-item cosine, implicit
-  ALS, LightFM-ID, and LightFM-Hybrid on identical users with NDCG/Recall/HR/MRR,
-  coverage/novelty/bias/diversity, activity and long-tail diagnostics, threshold sensitivity, paired bootstrap
-  intervals, and engineering costs.
+- ~10.6 held-out positives per user, so Recall@10 has a hard ceiling of **0.865**.
+- Confirmation samples exclude every user any earlier experiment scored; disjointness is asserted at sample time.
+- Decision rules are frozen in writing before the confirmation set is opened, once.
+- Evaluation and production use **separate model artifacts**. The evaluation artifact withholds held-out
+  positives; the production artifact trains on everything and is refused for measurement.
 
-The personalized methodology, commands, artifacts, and limitations are documented in
-[data/evaluation/personalized/README.md](data/evaluation/personalized/README.md). No challenger is wired into the
-production hybrid yet; ALS is the current promotion candidate and LightFM was declined.
+See [docs/EVALUATION.md](docs/EVALUATION.md).
 
-### Reading these numbers
+## What Did Not Work
 
-**Full-catalog NDCG@10 is not comparable to published NDCG@10.** Most reported figures in the 0.5-0.7 range come
-from a sampled-negative protocol: hold out one interaction, sample 99 unseen items, rank those 100. This project
-ranks the entire 18,064-item catalog and counts every held-out positive, because that is what the product actually
-does. The same ALS model on the same 800 users:
+| Experiment | Result | Decision |
+|---|---|---|
+| Pretrained synopsis embeddings | −8.9% NDCG@10, −11.9% Recall@10 on held-out users | Retired from the default path |
+| Learned linear fusion | Generalised worse than the hand-set blend (0.1814 vs 0.1996) | Rejected |
+| Segment-aware routing | Sparse-user NDCG@10 fell from 0.2003 to 0.1660 | Disabled by default |
+| Item-item supplementation | Restored tail reach, cost 9% NDCG@10 and 4× latency | Kept optional |
+| Rich Hybrid as the default | No measurable ranking gain over ALS alone, 125× the latency | Constraint-rich requests only |
 
-| Protocol | NDCG@10 |
-|---|---:|
-| All test positives, full 18,064-item catalog | **0.2875** (reported here) |
-| Leave-one-out, full catalog | 0.1775 |
-| Leave-one-out + 99 sampled negatives | **0.8260** (typical paper protocol) |
+Each had a predeclared decision rule. Reporting them is the point: the architecture is what survived.
 
-Nothing about the model changes between rows. Sampled negatives are reported only to make the scale explicit and
-are never used for selection, since they can reorder which model appears better. In practical terms: **HR@10 is
-0.8175**, so 82% of users get at least one held-out favourite in the top 10 of 18,064 titles, and Recall@10 of
-0.2618 sits against a hard ceiling of 0.8556 because a third of users have more than ten held-out positives.
-Full detail, and what genuinely limits the score, is in
-[metric comparability](data/evaluation/personalized/results/metric_comparability.md).
+## Engineering
 
-```powershell
-python scripts/compare_evaluation_protocols.py
-```
+- **364 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
+- **Artifact integrity**: SHA-256 pinning, catalog-digest pinning, and role separation between the evaluation and
+  production models. A catalog mismatch refuses startup rather than silently serving a stale model.
+- **NumPy-only serving.** No SciPy, no training code, and no ML framework in the web process.
+- **Reproducibility**: dataset, split, catalog, and artifact hashes recorded for every published number.
+- Known limitation: the interaction snapshot ends in 2020, so this measures preference reconstruction rather
+  than next-item prediction. There are no timestamps.
 
-### Personalized collaborative benchmark
+## Run Locally
 
-The primary result is a deterministic, representative 1,000-user sample from the full-data train-only split
-(`rating >= 8`, seed 42). Candidate catalog, known-item filtering, metrics, and held-out users are identical
-across models.
-
-| Model | NDCG@10 | Recall@10 | HR@10 | Coverage | Pop. bias | ILD | p50 rank latency |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Popularity | 0.1023 | 0.0881 | 0.4420 | 0.0059 | 0.1297 | 0.8222 | 0.22 ms |
-| CountSketch CF (production) | 0.1534 | 0.1408 | 0.5840 | 0.0775 | 0.0579 | **0.8264** | 6.93 ms |
-| Exact item-item cosine | 0.1650 | 0.1472 | 0.6010 | 0.0375 | 0.0898 | 0.8259 | 5.72 ms |
-| **ALS (implicit)** | **0.1841** | **0.1908** | **0.6810** | **0.0989** | **0.0377** | 0.7985 | 6.87 ms |
-| LightFM-ID | 0.1833 | 0.1589 | 0.6430 | 0.0380 | 0.0867 | 0.7990 | 1.19 ms |
-| LightFM-Hybrid | 0.1747 | 0.1483 | 0.6250 | 0.0421 | 0.0775 | 0.7770 | 1.16 ms |
-
-Lower popularity bias is better. Two findings drive the current decision:
-
-- **The CountSketch projection is not free.** Exact item-item cosine uses an identical residual transform on
-  identical inputs, so the only difference is the absence of the random projection. It is +7.5% relative NDCG@10
-  better (paired 95% CI `[+0.0036, +0.0194]`). The sketch's justification is its build-time memory profile, not
-  fidelity. Its coverage advantage turns out to come partly from the noise the projection introduces.
-- **ALS clears every gate LightFM failed.** It beats the production model by +20.0% relative NDCG@10 and +35.5%
-  relative Recall@10 (both intervals exclude zero), while *improving* catalog coverage by 27.6% and *reducing*
-  popularity bias by 34.9%. It is statistically tied with LightFM-ID on NDCG@10 and decisively better on
-  Recall@10 (+16.7% relative). Intra-list diversity regresses 3.4%, the one real trade.
-
-**ALS has since been tuned and confirmed.** A validation-only sweep over 12 candidates found the stock defaults
-were badly wrong: `alpha` dominates and lower is better (validation NDCG@10 rises from 0.1486 at alpha=100 to
-0.2733 at alpha=2.5), while coverage moves the opposite way, so raising factors to 128 was needed to keep both.
-On 800 predeclared users that no earlier run had scored, the selected configuration (128 factors, alpha 5.0)
-beats the production collaborative channel by **+75.2% relative NDCG@10** and **+76.3% relative Recall@10**, both
-intervals excluding zero, at 103% of its coverage and 46% lower popularity bias. Serving-time fold-in was verified
-faithful (cosine 0.9995 against trained user factors).
-
-ALS is **still not promoted**: threshold-7/9 sensitivity, the activity and long-tail diagnostics, and a diversity
-threshold remain outstanding, and integrating it into the hybrid is a separate decision. See the
-[ALS confirmation report](data/evaluation/personalized/results/als_confirmation_summary.md). See the [collaborative baselines decision report](data/evaluation/personalized/results/collaborative_baselines_summary.md)
-and the earlier [LightFM decision report](data/evaluation/personalized/results/lightfm_challenger_summary.md),
-which correctly declined LightFM against a comparison set that was missing these two baselines.
-
-Both baselines are NumPy/SciPy implementations that add no compiled dependency: exact blockwise adjusted-cosine
-similarity with top-K neighbour retention, and conjugate-gradient implicit ALS exporting item factors that fold a
-user's positives into item space at request time.
-
-```powershell
-python -m pip install -r requirements-evaluation.txt
-python scripts/evaluate_personalized.py --models popularity,countsketch_cf,item_item_cosine,als
-```
-
-### Learned fusion weights
-
-The ten channel weights above are hand-set constants. Because the scorer is linear in its channel signals, they
-can be fitted instead: `scripts/train_fusion_weights.py` optimises a RankNet-style pairwise logistic loss over
-held-out positives, under a non-negativity projection so the learned vector stays in the space the serving path
-already accepts.
-
-Fitted on 400 validation users and scored **once** on 400 disjoint test users:
-
-| Blend | Pairwise accuracy (held-out) |
-|---|---:|
-| Hand-set | **0.7284** |
-| Learned | 0.7225 |
-
-**The learned blend lost, so the hand-set weights stand.** Training loss did fall (0.6817 to 0.6727), so the fit
-worked; it simply did not generalise better. The most likely reason is that ten weights fitted on 18k pairs from
-376 users, over channels that are far from independent, can shift mass between near-collinear text signals without
-improving the ranking.
-
-The direction is still informative: the fit moves weight toward collaborative (+0.14) and creator (+0.21) signals
-and away from text similarity, which matches what the collaborative benchmark shows. Two caveats bound that
-reading — the semantic channel was inactive on the fitting machine, so its zeroed weight is an artifact of the run
-rather than a verdict on pretrained embeddings, and 43% of held-out positives never entered the 300-item
-shortlist, so the fit optimises ordering within the retrieved region rather than retrieval itself. Details and
-follow-ups are in the [learned fusion report](data/evaluation/personalized/results/learned_fusion_summary.md).
-
-### Catalog/agent regression benchmark
-
-The benchmark compares six actual configurations at `K=10`. One-channel runs set every unrelated channel weight to zero; the popularity baseline sorts the filtered candidate set directly.
-
-| Model | Hard filters | Entity constraints | Hit Rate@10 | Genre recovery | Coverage | Diversity | p50 ms |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Popularity | 1.000 | 1.000 | 0.200 | 0.847 | 0.002 | 0.754 | 227.4 |
-| Metadata TF-IDF | 1.000 | 1.000 | 0.200 | 0.764 | 0.004 | 0.565 | 3223.8 |
-| Synopsis TF-IDF | 1.000 | 1.000 | 0.200 | 0.806 | 0.004 | 0.831 | 3198.6 |
-| LSA | 1.000 | 1.000 | 0.400 | **0.903** | 0.004 | 0.835 | 3207.3 |
-| Pretrained semantic | 1.000 | 1.000 | 0.200 | **0.903** | 0.004 | 0.750 | 3367.7 |
-| Collaborative | 1.000 | 1.000 | **0.600** | 0.736 | 0.004 | 0.789 | 3533.3 |
-| Final hybrid | 1.000 | 1.000 | 0.800 | **0.903** | 0.004 | 0.728 | 3509.0 |
-
-This table previously reported a 1.000 hybrid hit rate measured **without** the semantic channel, which had never
-been built. With all ten channels active it is 0.800. At five labeled similarity cases that single flip is not
-itself significant; the significant evidence is in the [semantic channel report](data/evaluation/personalized/results/semantic_channel_summary.md).
-
-These are offline engineering proxies, not measurements of user satisfaction. The seven-case benchmark is small and manually labeled. Full definitions, p95 latency, model metadata, and caveats are in [data/evaluation/results.md](data/evaluation/results.md) and [data/evaluation/results.json](data/evaluation/results.json).
-
-Reproduce the table:
-
-```powershell
-python scripts/evaluate_recommender.py
-```
-
-## Actual Stack
-
-- Python 3.10+, FastAPI, Uvicorn, Pydantic v2
-- NumPy, Sentence Transformers, PyTorch CPU
-- SciPy for offline evaluation only; the web application never imports it
-- SQLAlchemy 2.x and SQLite
-- Gemini REST API and local Ollama/Gemma 3 adapters
-- Plain HTML, CSS, and JavaScript
-- Pytest, Ruff, MyPy, GitHub Actions
-- Docker and Docker Compose
-
-No React, Redis, Kafka, Kubernetes, authentication layer, GPU training, or open-web search is used.
-
-## Local Run
-
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+.venv/Scripts/activate            # Windows;  source .venv/bin/activate on macOS/Linux
+python -m pip install -r requirements-showcase.txt
 python -m pip install -e . --no-deps
-Copy-Item .env.example .env
-python run_app.py
 ```
 
-Open `http://127.0.0.1:8000`. Set `LLM_PROVIDER=ollama` for local Gemma 3 or `LLM_PROVIDER=gemini` plus a backend-only `GEMINI_API_KEY` for a public deployment. Search and recommendation endpoints remain available when both LLM providers are offline.
+The demo needs two artifacts that are too large for Git. Either download them from a Hugging Face Dataset repo:
 
-### Runtime artifacts
-
-Generated catalog artifacts are intentionally excluded from Git. Download and checksum-verify them from your public Hugging Face Dataset repository:
-
-```powershell
+```bash
 python scripts/download_artifacts.py --repo-id YOUR_HF_USERNAME/anime-compass-data
 ```
 
-Alternatively, place the CC0 Kaggle CSVs in the project and rebuild locally:
+or rebuild locally from the CC0 Kaggle CSVs:
 
-```powershell
+```bash
 python scripts/prepare_data.py
-python scripts/build_collaborative_model.py
-# Optional:
-python scripts/build_semantic_embeddings.py --force
+python scripts/build_production_als.py
+python scripts/verify_production_als.py
 ```
 
-## API
+Then:
 
-Interactive docs are available at `/docs`.
-
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/api/chat` | Parse intent, execute catalog tools, and return a grounded answer |
-| `POST` | `/api/recommend` | Run a typed hybrid recommendation request |
-| `POST` | `/api/search` | Paginated lexical/semantic search with filters and sorting |
-| `POST` | `/api/rank` | Deterministically filter and sort by an explicit catalog field |
-| `POST` | `/api/entities/search` | Resolve catalog entities |
-| `GET` | `/api/anime/{anime_id}` | Return anime details and relationships |
-| `GET/POST/DELETE` | `/api/session/{session_id}` | Manage anonymous session preferences |
-| `GET` | `/api/model-info` | Inspect active channels, weights, and artifacts |
-| `GET` | `/api/health` | Inspect API, catalog, database, provider, and embedding health |
-
-## Tests And CI
-
-```powershell
-python -m pip install -r requirements-dev.txt
-python -m pip install -e . --no-deps
-python -m compileall -q app backend scripts tests run_app.py
-python -m ruff check app backend scripts tests run_app.py
-python -m ruff format --check app backend scripts tests run_app.py
-python -m mypy app backend scripts
-python -m pytest -q
-node --check frontend/app.js
+```bash
+streamlit run streamlit_app.py
 ```
 
-Tests mock Gemini and Ollama, so CI requires no provider key and makes no paid API calls.
+The FastAPI service is unchanged and still runs with `python run_app.py`.
 
-## Docker And Hugging Face Spaces
+## Deployment
 
-```powershell
-docker build -t anime-compass .
-docker run --rm -p 8000:7860 -e HF_DATASET_REPO=YOUR_HF_USERNAME/anime-compass-data anime-compass
+**Streamlit Community Cloud.** The demo imports the recommendation core directly rather than calling FastAPI over
+HTTP — both would run in the same process, so the extra hop would add a failure mode and nothing else.
+
+1. Push this repository to GitHub.
+2. Upload `als_production_item_factors.npz` and `anime_catalog.json` somewhere with a stable https URL
+   (a Hugging Face Dataset repo works and is free).
+3. Create an app at [share.streamlit.io](https://share.streamlit.io) pointing at `streamlit_app.py`.
+4. Set these secrets so the app fetches and verifies the model:
+
+```toml
+ALS_ARTIFACT_URL = "https://.../als_production_item_factors.npz"
+ALS_EXPECTED_SHA256 = "95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10"
+ALS_EXPECTED_CATALOG_IDS_SHA256 = "0ab8367a4c8a10a84d8c28cb358ef57f0428ff8df1f7f4ad83342fccdf6a1be5"
 ```
 
-Or use `docker compose up --build`. The named volume stores only runtime SQLite data.
+If the artifact cannot be fetched or fails verification, the demo shows a clear model-unavailable state. It never
+falls back to a weaker model while presenting itself as the benchmarked one.
 
-For a Hugging Face Docker Space, set `HF_DATASET_REPO=YOUR_HF_USERNAME/anime-compass-data` as a Space variable. Missing artifacts are downloaded at startup and verified against `data/artifacts.manifest.json`. Add `LLM_PROVIDER=gemini` as a variable and `GEMINI_API_KEY` as a secret. Ollama remains the zero-cost local option but is not expected to run inside a small public Space.
+## Project Structure
 
-The complete account and repository checklist is in [docs/PUBLISHING.md](docs/PUBLISHING.md).
+```text
+streamlit_app.py                  portfolio demo entry point
+backend/anime_agent/
+  als_serving.py                  production ALS index (NumPy only)
+  fast_path.py                    default recommendation path
+  retrieval.py  routing.py        candidate retrieval and source selection
+  showcase.py                     headless service behind the demo
+  recommender.py                  multi-channel hybrid (constraint-rich path)
+  evaluation/                     offline benchmark harness
+app/                              FastAPI service
+scripts/                          build, evaluate, verify, migrate
+docs/                             architecture, evaluation, portfolio summary
+data/evaluation/personalized/     experiment reports and decision records
+tests/                            364 tests
+```
 
-## Data And Security
+## Data And License
 
-The primary catalog and interaction data derive from [Anime Recommendation Database 2020](https://www.kaggle.com/datasets/hernan4444/anime-recommendation-database-2020), released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). Legacy CC0 data is retained only as relationship/poster enrichment and a newer-title extension. See [DATASET_ATTRIBUTION.md](DATASET_ATTRIBUTION.md).
+Derived from [Anime Recommendation Database 2020](https://www.kaggle.com/datasets/hernan4444/anime-recommendation-database-2020),
+released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). See
+[DATASET_ATTRIBUTION.md](DATASET_ATTRIBUTION.md). Source code is [MIT](LICENSE).
 
-Provider credentials are loaded only from ignored backend environment files. Request bodies, collection sizes, timeouts, CORS origins, rate limits, and output lengths are bounded. Error responses and frontend assets do not expose provider keys.
-
-## Limitations
-
-- Offline metrics cannot establish real user satisfaction; the 1,000-user result still needs a predeclared larger
-  confirmation before any production model substitution.
-- The pretrained semantic channel is configured at 0.14 but measurably hurts ranking quality when enabled, and is
-  scheduled for removal or re-specification. Every benchmark published before this was produced without it.
-- ALS beats the production collaborative channel on accuracy, coverage, and popularity bias simultaneously, but
-  its hyperparameters came from standard defaults rather than a validation-only sweep, and threshold-7/9
-  sensitivity plus the activity and long-tail diagnostics have not yet been run for it.
-- The CountSketch projection measurably costs accuracy against exact item-item cosine (+7.5% relative NDCG@10 for
-  the exact model). Its remaining justification is build-time memory, not fidelity.
-- Learned fusion weights were fitted and did not beat the hand-set constants on disjoint users, so the constants
-  remain in production. The fit is also limited by its candidate shortlist, which optimises ordering within the
-  retrieved region rather than retrieval itself, and by one inactive channel during the run.
-- The interaction snapshot ends in 2020; post-snapshot titles rely on content and quality channels until newer ratings are available.
-- Session personalization is anonymous, local, and not synchronized across devices.
-- The archive stops at 2022 and has missing studio/staff data; retained enrichment extends coverage but is not a complete relationship graph.
-- The 18,064-item Python scorer prioritizes transparency over low-latency vector-database retrieval.
-- Public Gemini usage depends on the provider's current free-tier quota; deterministic features require no paid service.
-
-## Resume Bullets
-
-- Built a reproducible offline evaluation harness (leakage-safe per-user holdout, paired bootstrap intervals,
-  coverage/novelty/popularity-bias diagnostics, threshold sensitivity) rigorous enough to reject a challenger that
-  beat production by 19.5% NDCG@10, then to identify from the same harness that an ALS baseline improves NDCG@10
-  by 20.0% and Recall@10 by 35.5% while also improving catalog coverage 27.6% and reducing popularity bias 34.9%.
-- Built a local-first anime recommendation Agent with FastAPI, Pydantic-constrained LLM intent parsing, typed tool routing, catalog-grounded response validation, and bounded deterministic replanning that relaxes over-constrained filters without ever relaxing verified entity constraints, across Gemini and Ollama/Gemma 3 providers.
-- Implemented an explainable hybrid recommender over 18,064 titles and 56.7M anonymous ratings using scalable user-centred collaborative projections, metadata/synopsis TF-IDF, LSA, creator signals, hard entity joins, diversity reranking, and session feedback.
-- Built a reproducible data-quality and ablation pipeline plus 160+ automated API, Agent, ranking, artifact-integrity, security, and transcript regression tests, with graceful deterministic fallback when LLM providers are unavailable.
-- Found and fixed a silent model defect: a documented 0.14-weight embedding channel had never been built,
-  manifested, or wired into any evaluation path, so every published metric described a ten-channel model measured
-  as nine; building it showed the channel costs 8.9% relative NDCG@10, and the weight was retired on that evidence.
-- Implemented exact blockwise adjusted-cosine item similarity and conjugate-gradient implicit ALS in NumPy/SciPy
-  (no compiled dependency) to quantify what a CountSketch projection costs and to supply the standard latent-factor
-  reference point, then replaced hand-set hybrid channel weights with a pairwise RankNet-style fit under a
-  non-negativity constraint, fitted on validation users and scored once on disjoint test users; reported the
-  negative result and retained the hand-set weights when the learned blend failed to generalise.
-
-The source code is available under the [MIT License](LICENSE). Dataset-derived artifacts retain their [CC0 attribution](DATASET_ATTRIBUTION.md).
+This is a portfolio project. There are no real users and no production traffic behind these numbers.
