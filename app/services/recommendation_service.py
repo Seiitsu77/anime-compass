@@ -10,15 +10,34 @@ from typing import Any
 from app.api.schemas import RecommendRequest
 from app.core.errors import AppError
 from app.repositories.session_repository import SQLiteSessionRepository, merge_profiles
+from backend.anime_agent.als_serving import ALSCollaborativeIndex
+from backend.anime_agent.fast_path import FastPathConfig, recommend_fast
+from backend.anime_agent.path_policy import RecommendationPath, choose_recommendation_path
 from backend.anime_agent.recommender import AnimeRecommender
 
 logger = logging.getLogger("anime_compass.recommendation")
 
 
 class RecommendationService:
-    def __init__(self, recommender: AnimeRecommender, sessions: SQLiteSessionRepository):
+    def __init__(
+        self,
+        recommender: AnimeRecommender,
+        sessions: SQLiteSessionRepository,
+        *,
+        als_index: ALSCollaborativeIndex | None = None,
+        fallback_index: Any | None = None,
+        tail_index: Any | None = None,
+        fast_path_config: FastPathConfig | None = None,
+    ):
         self.recommender = recommender
         self.sessions = sessions
+        # The fast path is the default for unconstrained personalized requests.
+        # Without a collaborative source every request takes the
+        # constraint-rich hybrid, which is the pre-existing behaviour.
+        self.als_index = als_index
+        self.fallback_index = fallback_index
+        self.tail_index = tail_index
+        self.fast_path_config = fast_path_config or FastPathConfig()
         self._cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
         self._cache_ttl_seconds = 45.0
         self._cache_size = 128
@@ -32,6 +51,28 @@ class RecommendationService:
         cached = self._get_cached(cache_key)
         if cached is not None:
             return {**cached, "cache_hit": True}
+
+        path_decision = choose_recommendation_path(request.model_dump())
+        if path_decision.path is RecommendationPath.FAST and self.als_index is not None:
+            fast = await asyncio.to_thread(self._recommend_fast, request, session_profile, path_decision)
+            if fast is not None:
+                fast["timing_ms"] = round((time.perf_counter() - started) * 1000, 2)
+                if cache_key:
+                    self._put_cached(cache_key, fast)
+                logger.info(
+                    "recommendation_completed",
+                    extra={
+                        "context": {
+                            "path": "fast",
+                            "collaborative_route": fast["diagnostics"].get("collaborative_route"),
+                            "candidate_pool_size": fast["diagnostics"].get("candidate_pool_size"),
+                            "tail_source_used": fast["diagnostics"].get("tail_source_used"),
+                            "result_count": len(fast["results"]),
+                            "duration_ms": fast["timing_ms"],
+                        }
+                    },
+                )
+                return fast
 
         payload = request.model_dump(exclude={"session_id", "session_profile", "limit"})
         payload["session_profile"] = session_profile
@@ -111,6 +152,72 @@ class RecommendationService:
 
     async def search_page(self, **query: Any) -> tuple[list[dict[str, Any]], int]:
         return await asyncio.to_thread(self.recommender.search_page, **query)
+
+    def _recommend_fast(
+        self,
+        request: RecommendRequest,
+        session_profile: dict[str, Any],
+        path_decision: Any,
+    ) -> dict[str, Any] | None:
+        """Serve an unconstrained personalized request from the fast path.
+
+        Returns None when the profile yields no candidates, so the caller falls
+        through to the hybrid rather than returning an empty list.
+        """
+        assert self.als_index is not None
+        positives = [int(value) for value in request.liked_ids]
+        positives.extend(int(value) for value in session_profile.get("liked_ids", []) or [])
+        excluded = [int(value) for value in request.excluded_ids]
+        excluded.extend(int(value) for value in session_profile.get("disliked_ids", []) or [])
+        excluded.extend(int(value) for value in session_profile.get("watched_ids", []) or [])
+
+        result = recommend_fast(
+            positives,
+            catalog_by_id=self.recommender.by_id,
+            als_source=self.als_index,
+            fallback_source=self.fallback_index,
+            tail_source=self.tail_index,
+            quality_lookup=self.als_index,
+            excluded_ids=excluded,
+            limit=request.top_k,
+            config=self.fast_path_config,
+        )
+        if not result.anime_ids:
+            return None
+
+        items = [
+            self.recommender.public_item(self.recommender.by_id[anime_id])
+            for anime_id in result.anime_ids
+            if anime_id in self.recommender.by_id
+        ]
+        provenance = {candidate.anime_id: candidate.as_dict() for candidate in result.candidates}
+        for item in items:
+            entry = provenance.get(int(item["id"]))
+            if entry is not None:
+                item["candidate_sources"] = entry["sources"]
+
+        diagnostics = {**result.diagnostics, **path_decision.as_dict()}
+        diagnostics["artifact_versions"] = self._artifact_versions()
+        return {
+            "query": request.model_dump(exclude={"liked_ids", "excluded_ids", "weights", "session_profile", "limit"}),
+            "resolved_titles": [],
+            "recommendations": items,
+            "results": items,
+            "model_info": self.recommender.model_info(),
+            "diagnostics": diagnostics,
+            "cache_hit": False,
+        }
+
+    def _artifact_versions(self) -> dict[str, Any]:
+        """Version metadata so a served result is traceable to its artifacts."""
+        info = self.als_index.model_info() if self.als_index is not None else {}
+        return {
+            "als_artifact_sha256": info.get("artifact_sha256"),
+            "als_split_sha256": info.get("split_sha256"),
+            "routing_config_version": self.fast_path_config.routing.version,
+            "retrieval_config_version": self.fast_path_config.retrieval.version,
+            "ranking_config_version": self.fast_path_config.version,
+        }
 
     def _validate_catalog_values(self, request: RecommendRequest) -> None:
         metadata = self.recommender.meta()

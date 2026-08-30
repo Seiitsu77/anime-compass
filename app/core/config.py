@@ -57,6 +57,33 @@ class Settings(BaseSettings):
     semantic_artifact_path: Path = PROJECT_ROOT / "data" / "processed" / "semantic_embeddings.npz"
     collaborative_enabled: bool = True
     collaborative_artifact_path: Path = PROJECT_ROOT / "data" / "processed" / "collaborative_embeddings.npz"
+    # Frozen implicit-ALS artifact. When present it becomes the primary
+    # collaborative source; CountSketch stays loaded as the sparse-user
+    # fallback, the tail-exposure source, and the degradation path.
+    als_artifact_path: Path = PROJECT_ROOT / "data" / "processed" / "als_item_factors.npz"
+    als_enabled: bool = True
+    # Optional pin. When set, the artifact must hash to exactly this value or
+    # startup refuses it rather than serving an unverified model.
+    als_expected_sha256: str = ""
+    # When False (default) an invalid ALS artifact logs a loud error and the
+    # app degrades to CountSketch: ALS is an accelerator, not a hard dependency.
+    # Set True in environments where serving without ALS is unacceptable.
+    # A mismatch against an explicitly pinned ALS_EXPECTED_SHA256 always refuses,
+    # because that is an integrity failure rather than a missing optional model.
+    als_require_valid_artifact: bool = False
+    # Known positives at which ALS becomes the primary source. The offline
+    # activity-balanced diagnostic showed no demonstrated ALS gain below 5.
+    routing_medium_threshold: int = 5
+    # Measured worse for sparse users than global ALS; see routing.py.
+    routing_segment_aware: bool = False
+    # Candidate pool sizes for the fast path.
+    retrieval_als_top_n: int = 300
+    # Opt-in: costs 9% relative NDCG@10 for tail reach. See routing.py.
+    retrieval_item_item_top_m: int = 0
+    item_item_artifact_path: Path = PROJECT_ROOT / "data" / "processed" / "item_item_neighbors.npz"
+    # Diversity is off by default: ALS costs 2.97% ILD for a 73% relevance gain.
+    fast_path_diversity_strength: float = 0.0
+    fast_path_diversity_window: int = 30
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -68,6 +95,8 @@ class Settings(BaseSettings):
     @field_validator(
         "semantic_artifact_path",
         "collaborative_artifact_path",
+        "als_artifact_path",
+        "item_item_artifact_path",
         mode="before",
     )
     @classmethod

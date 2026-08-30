@@ -26,10 +26,14 @@ from app.embeddings.index import SemanticEmbeddingIndex
 from app.embeddings.sentence_transformer import SentenceTransformerEmbeddingProvider
 from app.repositories.session_repository import SQLiteSessionRepository
 from app.services.recommendation_service import RecommendationService
+from backend.anime_agent.als_serving import ALSArtifactError, ALSCollaborativeIndex
 from backend.anime_agent.collaborative import CollaborativeIndex
 from backend.anime_agent.data_pipeline import load_or_create_catalog
 from backend.anime_agent.entities import EntityResolver
+from backend.anime_agent.fast_path import FastPathConfig
 from backend.anime_agent.recommender import AnimeRecommender
+from backend.anime_agent.retrieval import RetrievalConfig
+from backend.anime_agent.routing import RoutingPolicy
 from scripts.download_artifacts import ensure_artifacts
 
 logger = logging.getLogger("anime_compass.api")
@@ -93,6 +97,11 @@ def create_app(
             settings,
             loaded_catalog,
         )
+        # ALS is the primary collaborative source for users with history.
+        # CountSketch stays loaded regardless: it is the sparse-user fallback,
+        # the only cheap source with tail exposure, and the degradation path if
+        # the ALS artifact is missing or fails validation.
+        loaded_als = _load_als_index(settings, loaded_catalog, quality_source=loaded_collaborative)
         recommender = AnimeRecommender(
             loaded_catalog,
             semantic_index=loaded_semantic,
@@ -107,7 +116,24 @@ def create_app(
         app.state.container = AppContainer(
             settings=settings,
             recommender=recommender,
-            recommendations=RecommendationService(recommender, sessions),
+            recommendations=RecommendationService(
+                recommender,
+                sessions,
+                als_index=loaded_als,
+                fallback_index=loaded_collaborative,
+                fast_path_config=FastPathConfig(
+                    retrieval=RetrievalConfig(
+                        als_top_n=settings.retrieval_als_top_n,
+                        item_item_top_m=settings.retrieval_item_item_top_m,
+                    ),
+                    routing=RoutingPolicy(
+                        medium_threshold=settings.routing_medium_threshold,
+                        segment_aware=settings.routing_segment_aware,
+                    ),
+                    diversity_strength=settings.fast_path_diversity_strength,
+                    diversity_window=settings.fast_path_diversity_window,
+                ),
+            ),
             sessions=sessions,
             entity_resolver=EntityResolver(loaded_catalog),
             agent=agent,
@@ -291,6 +317,63 @@ def _load_semantic_index(
             extra={"context": {"error_type": type(exc).__name__}},
         )
         return None
+
+
+def _load_als_index(
+    settings: Settings,
+    catalog: list[dict[str, Any]],
+    *,
+    quality_source: Any | None = None,
+) -> ALSCollaborativeIndex | None:
+    """Load the frozen ALS artifact, or return None to fall back.
+
+    A *missing* artifact is a normal degraded state and logs a warning. A
+    *present but invalid* artifact is not: a checksum or catalog mismatch means
+    the model does not describe this catalog, so it is refused loudly rather
+    than served. Nothing here trains or rebuilds.
+    """
+    if not settings.als_enabled:
+        return None
+    if not settings.als_artifact_path.exists():
+        logger.warning(
+            "als_artifact_missing",
+            extra={"context": {"path": str(settings.als_artifact_path)}},
+        )
+        return None
+    try:
+        index = ALSCollaborativeIndex.load(
+            settings.als_artifact_path,
+            catalog,
+            quality_source=quality_source,
+            expected_artifact_sha256=settings.als_expected_sha256 or None,
+        )
+    except ALSArtifactError as exc:
+        logger.error(
+            "als_artifact_invalid",
+            extra={
+                "context": {
+                    "path": str(settings.als_artifact_path),
+                    "detail": str(exc)[:200],
+                    "strict": settings.als_require_valid_artifact,
+                }
+            },
+        )
+        # A pinned-checksum mismatch is always fatal: someone asked for a
+        # specific artifact and got a different one.
+        if settings.als_require_valid_artifact or settings.als_expected_sha256:
+            raise
+        return None
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "als_index_unavailable",
+            extra={"context": {"error_type": type(exc).__name__}},
+        )
+        return None
+    logger.info(
+        "als_index_loaded",
+        extra={"context": {k: v for k, v in index.model_info().items() if k != "method"}},
+    )
+    return index
 
 
 def _load_collaborative_index(
