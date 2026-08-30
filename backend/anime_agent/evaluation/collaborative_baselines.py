@@ -22,6 +22,7 @@ from __future__ import annotations
 import heapq
 import json
 import time
+from array import array
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,18 @@ from .split import SplitStore, UserSplit, sha256_file
 
 ITEM_ITEM_ARTIFACT_VERSION = 1
 ALS_ARTIFACT_VERSION = 1
+
+# Two ALS artifacts exist and must never be confused.
+#
+# "evaluation" is trained on a leakage-safe split that withholds each user's
+# held-out positives. Every published holdout metric comes from it, so it must
+# stay byte-stable and must never be rebuilt from full data.
+#
+# "production" is trained on all historically available positives. It is
+# strictly better for serving and strictly invalid for measuring, because the
+# users it trained on include the ones any holdout would score.
+ARTIFACT_ROLE_EVALUATION = "evaluation"
+ARTIFACT_ROLE_PRODUCTION = "production"
 
 
 def _require_scipy() -> Any:
@@ -438,6 +451,7 @@ def build_als_artifact_from_split(
 
     metadata = {
         "artifact_version": ALS_ARTIFACT_VERSION,
+        "artifact_role": ARTIFACT_ROLE_EVALUATION,
         "method": "implicit-feedback ALS (conjugate gradient)",
         "training_source": "personalized split train positives",
         "split_sha256": sha256_file(store.path),
@@ -680,3 +694,193 @@ class ALSCollaborativeAdapter:
         info = dict(self.als.config)
         info.update({"available": True, "method": "implicit ALS (hybrid collaborative channel)"})
         return info
+
+
+# --------------------------------------------------------------------------
+# Full-data production training
+# --------------------------------------------------------------------------
+
+
+def build_production_als_artifact(
+    ratings_path: Path,
+    catalog: Sequence[Mapping[str, Any]],
+    output_path: Path,
+    *,
+    positive_threshold: int = 8,
+    factors: int = 128,
+    iterations: int = 15,
+    regularization: float = 0.05,
+    alpha: float = 5.0,
+    cg_steps: int = 3,
+    seed: int = 42,
+    row_limit: int | None = None,
+    progress: Any | None = None,
+) -> dict[str, Any]:
+    """Train ALS on **all** historically available positives, for serving only.
+
+    This reads the raw rating file rather than a split store, so no positives
+    are withheld. The resulting artifact is therefore stronger for serving and
+    invalid for measuring: any holdout scored against it would consist of
+    interactions it already trained on. It is tagged
+    ``artifact_role="production"`` so the two cannot be mixed up, and it carries
+    no ``split_sha256`` because it belongs to no split.
+
+    Hyperparameters default to the frozen validated configuration. They remain
+    parameters so tests can train a tiny model, not so production can retune.
+    """
+    if factors < 1 or iterations < 1:
+        raise ValueError("factors and iterations must be positive")
+    if regularization < 0.0 or alpha <= 0.0:
+        raise ValueError("regularization must be non-negative and alpha positive")
+    if not 1 <= positive_threshold <= 10:
+        raise ValueError("positive_threshold must be between 1 and 10")
+
+    sparse = _require_scipy()
+    started = time.perf_counter()
+    anime_ids = np.asarray(sorted({int(item["id"]) for item in catalog}), dtype=np.int64)
+    if not len(anime_ids):
+        raise ValueError("Cannot train ALS with an empty catalog")
+    column_by_id = {int(value): index for index, value in enumerate(anime_ids.tolist())}
+
+    # The file is user-sorted, so a change of user id starts a new matrix row.
+    # array("i") keeps the edge list compact without a Python int per edge.
+    row_buffer = array("i")
+    column_buffer = array("i")
+    rows_seen = 0
+    positives = 0
+    orphan_rows = 0
+    current_user: int | None = None
+    previous_user = -1
+    current_row = -1
+
+    with Path(ratings_path).open("r", encoding="utf-8-sig", errors="strict", newline="") as handle:
+        header = handle.readline().rstrip("\r\n").split(",")
+        if header != ["user_id", "anime_id", "rating"]:
+            raise ValueError(f"Unexpected rating file header: {header}")
+        for line in handle:
+            if row_limit is not None and rows_seen >= row_limit:
+                break
+            fields = line.rstrip("\r\n").split(",")
+            if len(fields) != 3:
+                raise ValueError(f"Malformed rating row at line {rows_seen + 2}")
+            try:
+                user_id, anime_id, rating = map(int, fields)
+            except ValueError as exc:
+                raise ValueError(f"Non-integer rating row at line {rows_seen + 2}") from exc
+            if user_id < previous_user:
+                raise ValueError("The rating file must be sorted by user_id")
+            if rating < 1 or rating > 10:
+                raise ValueError(f"Rating outside 1..10 at line {rows_seen + 2}")
+            previous_user = user_id
+            rows_seen += 1
+            if progress is not None and rows_seen % 5_000_000 == 0:
+                progress(f"scanned {rows_seen:,} rating rows")
+
+            if rating < positive_threshold:
+                continue
+            column = column_by_id.get(anime_id)
+            if column is None:
+                orphan_rows += 1
+                continue
+            if user_id != current_user:
+                current_user = user_id
+                current_row += 1
+            row_buffer.append(current_row)
+            column_buffer.append(column)
+            positives += 1
+
+    if not positives:
+        raise ValueError("No positive interactions were found")
+
+    user_count = current_row + 1
+    interactions = sparse.csr_matrix(
+        (
+            np.ones(positives, dtype=np.float32),
+            (
+                np.frombuffer(row_buffer, dtype=np.int32),
+                np.frombuffer(column_buffer, dtype=np.int32),
+            ),
+        ),
+        shape=(user_count, len(anime_ids)),
+        dtype=np.float32,
+    )
+    del row_buffer, column_buffer
+    if progress is not None:
+        progress(f"built {positives:,} positive edges over {user_count:,} users")
+
+    user_major = interactions.tocsr()
+    item_major = interactions.tocsc()
+    generator = np.random.default_rng(seed)
+    user_factors: npt.NDArray[Any] = generator.normal(0.0, 0.01, size=(user_count, factors)).astype(np.float32)
+    item_factors: npt.NDArray[Any] = generator.normal(0.0, 0.01, size=(len(anime_ids), factors)).astype(np.float32)
+
+    for iteration in range(iterations):
+        _solve_factors(
+            user_factors,
+            item_factors,
+            user_major.indptr,
+            user_major.indices,
+            regularization,
+            alpha,
+            cg_steps,
+        )
+        _solve_factors(
+            item_factors,
+            user_factors,
+            item_major.indptr,
+            item_major.indices,
+            regularization,
+            alpha,
+            cg_steps,
+        )
+        if progress is not None:
+            progress(f"iteration {iteration + 1}/{iterations}")
+
+    if not np.isfinite(item_factors).all() or not np.isfinite(user_factors).all():
+        raise ValueError("ALS training diverged and produced non-finite factors")
+
+    metadata = {
+        "artifact_version": ALS_ARTIFACT_VERSION,
+        "artifact_role": ARTIFACT_ROLE_PRODUCTION,
+        "method": "implicit-feedback ALS (conjugate gradient)",
+        "training_source": "all historically available positive ratings",
+        "not_valid_for_holdout_evaluation": True,
+        "ratings_file": Path(ratings_path).name,
+        "ratings_sha256": sha256_file(Path(ratings_path)),
+        "catalog_ids_sha256": _catalog_id_digest(anime_ids),
+        "positive_threshold": int(positive_threshold),
+        "rows_scanned": rows_seen,
+        "catalog_items": len(anime_ids),
+        "users_seen": user_count,
+        "ratings_used": positives,
+        "orphan_positive_rows": orphan_rows,
+        "factors": int(factors),
+        "iterations": int(iterations),
+        "regularization": float(regularization),
+        "alpha": float(alpha),
+        "cg_steps": int(cg_steps),
+        "seed": int(seed),
+        "confidence_mapping": "binary",
+        "build_duration_seconds": round(time.perf_counter() - started, 6),
+    }
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(".tmp.npz")
+    np.savez_compressed(
+        temporary,
+        anime_ids=anime_ids,
+        item_factors=item_factors,
+        metadata_json=np.asarray(json.dumps(metadata, separators=(",", ":"), sort_keys=True)),
+    )
+    temporary.replace(output_path)
+    return metadata
+
+
+def _catalog_id_digest(anime_ids: npt.NDArray[Any]) -> str:
+    """Hash the exact catalog ID set the artifact was trained against."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for value in anime_ids.tolist():
+        digest.update(str(int(value)).encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
