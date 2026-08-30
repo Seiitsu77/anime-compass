@@ -26,7 +26,11 @@ from app.embeddings.index import SemanticEmbeddingIndex
 from app.embeddings.sentence_transformer import SentenceTransformerEmbeddingProvider
 from app.repositories.session_repository import SQLiteSessionRepository
 from app.services.recommendation_service import RecommendationService
-from backend.anime_agent.als_serving import ALSArtifactError, ALSCollaborativeIndex
+from backend.anime_agent.als_serving import (
+    ALSArtifactError,
+    ALSCatalogMismatchError,
+    ALSCollaborativeIndex,
+)
 from backend.anime_agent.collaborative import CollaborativeIndex
 from backend.anime_agent.data_pipeline import load_or_create_catalog
 from backend.anime_agent.entities import EntityResolver
@@ -346,21 +350,48 @@ def _load_als_index(
             catalog,
             quality_source=quality_source,
             expected_artifact_sha256=settings.als_expected_sha256 or None,
+            expected_role=settings.als_expected_role or None,
+            expected_catalog_ids_sha256=settings.als_expected_catalog_ids_sha256 or None,
         )
     except ALSArtifactError as exc:
+        # A catalog mismatch means the served catalog moved out from under the
+        # model. Falling back quietly would keep serving recommendations from a
+        # model that no longer describes the catalog, so this is escalated as an
+        # explicit degradation event rather than logged as an ordinary warning.
+        severity = "critical" if isinstance(exc, ALSCatalogMismatchError) else "high"
         logger.error(
-            "als_artifact_invalid",
+            "als_artifact_degradation",
             extra={
                 "context": {
+                    "event": "als_artifact_invalid",
+                    "severity": severity,
+                    "error_type": type(exc).__name__,
                     "path": str(settings.als_artifact_path),
-                    "detail": str(exc)[:200],
+                    "detail": str(exc)[:300],
+                    "expected_role": settings.als_expected_role,
+                    "checksum_pinned": bool(settings.als_expected_sha256),
+                    "catalog_pinned": bool(settings.als_expected_catalog_ids_sha256),
                     "strict": settings.als_require_valid_artifact,
+                    "action": "refusing_startup"
+                    if (
+                        settings.als_require_valid_artifact
+                        or settings.als_expected_sha256
+                        or settings.als_expected_catalog_ids_sha256
+                        or isinstance(exc, ALSCatalogMismatchError)
+                    )
+                    else "degraded_to_countsketch",
                 }
             },
         )
-        # A pinned-checksum mismatch is always fatal: someone asked for a
-        # specific artifact and got a different one.
-        if settings.als_require_valid_artifact or settings.als_expected_sha256:
+        # Refuse to start when an operator pinned something specific and did not
+        # get it, when strict mode is on, or when the catalog itself no longer
+        # matches. Only a non-pinned, non-catalog validation failure degrades.
+        if (
+            settings.als_require_valid_artifact
+            or settings.als_expected_sha256
+            or settings.als_expected_catalog_ids_sha256
+            or isinstance(exc, ALSCatalogMismatchError)
+        ):
             raise
         return None
     except (OSError, ValueError) as exc:

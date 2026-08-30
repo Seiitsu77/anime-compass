@@ -60,11 +60,19 @@ class Settings(BaseSettings):
     # Frozen implicit-ALS artifact. When present it becomes the primary
     # collaborative source; CountSketch stays loaded as the sparse-user
     # fallback, the tail-exposure source, and the degradation path.
-    als_artifact_path: Path = PROJECT_ROOT / "data" / "processed" / "als_item_factors.npz"
+    als_artifact_path: Path = PROJECT_ROOT / "data" / "processed" / "als_production_item_factors.npz"
     als_enabled: bool = True
     # Optional pin. When set, the artifact must hash to exactly this value or
     # startup refuses it rather than serving an unverified model.
     als_expected_sha256: str = ""
+    # Pin the exact catalog the artifact was trained against. The overlap ratio
+    # is fuzzy by design; this is exact, and catches a catalog that drifted
+    # while still overlapping heavily.
+    als_expected_catalog_ids_sha256: str = ""
+    # Production must serve a production-role artifact. An evaluation artifact
+    # withholds held-out positives, so serving it would quietly ship a weaker
+    # model; set to "evaluation" only for offline parity work.
+    als_expected_role: str = "production"
     # When False (default) an invalid ALS artifact logs a loud error and the
     # app degrades to CountSketch: ALS is an accelerator, not a hard dependency.
     # Set True in environments where serving without ALS is unacceptable.
