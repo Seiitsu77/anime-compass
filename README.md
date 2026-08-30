@@ -93,9 +93,42 @@ was loosened instead of silently widening the request.
 
 For a request such as "recommend 7 anime with Yoshitsugu Matsuoka," the backend resolves the voice-actor record, joins its related anime IDs, filters to that verified subset, and only then ranks. Each result includes `matched_voice_actors`, character, language, entity ID, and relationship evidence.
 
+## Recommendation Architecture
+
+The default ranking path is **ALS-first and fast**. The ten-channel hybrid still exists and still runs, but only
+for requests that need deterministic constraint handling. On the same 800 held-out users, full-catalog ranking:
+
+| Architecture | NDCG@10 | Recall@10 | p50 | p95 |
+|---|---:|---:|---:|---:|
+| Hybrid + CountSketch (previous default) | 0.1815 | 0.1682 | 924.6 ms | 1186.3 ms |
+| **Fast ALS path (current default)** | **0.2588** | **0.2480** | **2.0 ms** | **2.7 ms** |
+
+**+42.6% relative NDCG@10 at roughly 1/465th the latency**, paired 95% CI `[+0.0641, +0.0897]`.
+
+```text
+request -> path policy -> [fast: ALS retrieval -> filters -> lightweight ranking]
+                       -> [constraint-rich: entity joins -> hard filters -> hybrid channels]
+```
+
+A request takes the constraint-rich path when it names entities, metadata filters, reference titles, or free-text
+preferences. Otherwise it takes the fast path. Neither path is "better" — they answer different questions, and
+the personalized benchmark never scored what the rich path exists to do.
+
+This was **evidence-driven complexity reduction**, not feature removal:
+
+- ALS beat CountSketch robustly across rating thresholds 7, 8, and 9 (+59% to +87% relative NDCG@10).
+- Substituting ALS into the hybrid gave no measurable ranking gain over standalone ALS (interval includes zero)
+  for 125x the latency.
+- ALS alone has **zero** mid-tail and long-tail exposure, so CountSketch and item-item are retained as
+  complementary sources rather than deleted.
+
+Full detail, routing rules, and configuration are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Recommendation Model
 
-The model is a **multi-channel hybrid collaborative/content recommender with session-based personalization**:
+The constraint-rich path uses a **multi-channel hybrid collaborative/content recommender with session-based
+personalization**. The fast default path uses ALS retrieval plus a lightweight rank-and-quality blend; the table
+below describes the hybrid.
 
 | Channel | Default weight | Source |
 |---|---:|---|
