@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +19,45 @@ from backend.anime_agent.recommender import AnimeRecommender
 from backend.anime_agent.routing import RoutingPolicy
 
 
-def build_artifact(path: Path, anime_ids: list[int], dimensions: int = 4) -> Path:
+class _RecordCollector(logging.Handler):
+    """Collect log records directly.
+
+    configure_logging() clears root handlers, which removes pytest's caplog
+    handler, so these tests attach their own instead of relying on caplog.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@contextlib.contextmanager
+def capture_logs():
+    collector = _RecordCollector()
+    root = logging.getLogger()
+    root.addHandler(collector)
+    previous = root.level
+    root.setLevel(logging.DEBUG)
+    try:
+        yield collector
+    finally:
+        root.removeHandler(collector)
+        root.setLevel(previous)
+
+
+def degradation_events(collector: _RecordCollector) -> list[logging.LogRecord]:
+    return [r for r in collector.records if "als_artifact_degradation" in r.getMessage()]
+
+
+def build_artifact(
+    path: Path,
+    anime_ids: list[int],
+    dimensions: int = 4,
+    role: str = "production",
+) -> Path:
     """A hand-built ALS artifact: item i is closest to items with the same parity."""
     import json
 
@@ -34,6 +74,7 @@ def build_artifact(path: Path, anime_ids: list[int], dimensions: int = 4) -> Pat
         "alpha": 5.0,
         "regularization": 0.05,
         "iterations": 15,
+        "artifact_role": role,
         "split_sha256": "test-split",
         "training_source": "unit-test fixture",
     }
@@ -181,21 +222,45 @@ async def test_semantic_stays_retired_on_the_fast_path(service):
     assert response["model_info"]["weights"]["semantic_embedding"] == 0.0
 
 
-def test_invalid_artifact_degrades_by_default(tmp_path, catalog, caplog):
-    """ALS is an accelerator, not a startup dependency."""
-    import logging
+def test_catalog_mismatch_refuses_to_start(tmp_path, catalog):
+    """The catalog moving out from under the model is not a quiet fallback.
 
+    Degrading silently would keep serving recommendations from a model that no
+    longer describes the catalog, so this escalates rather than falling back.
+    """
     from app.core.config import Settings
     from app.main import _load_als_index
+    from backend.anime_agent.als_serving import ALSCatalogMismatchError
 
     ids = sorted(int(item["id"]) for item in catalog)
     artifact = build_artifact(tmp_path / "als.npz", ids)
     settings = Settings(_env_file=None, als_artifact_path=artifact)
     unrelated = [{"id": anime_id} for anime_id in range(9000, 9020)]
 
-    with caplog.at_level(logging.ERROR):
-        assert _load_als_index(settings, unrelated) is None
-    assert any("als_artifact_invalid" in record.message for record in caplog.records)
+    with capture_logs() as logs, pytest.raises(ALSCatalogMismatchError):
+        _load_als_index(settings, unrelated)
+    events = degradation_events(logs)
+    assert events, "a catalog mismatch must emit an explicit degradation event"
+    assert events[0].context["severity"] == "critical"
+    assert events[0].context["action"] == "refusing_startup"
+
+
+def test_role_mismatch_degrades_and_emits_a_high_severity_event(tmp_path, catalog):
+    """An evaluation artifact must never quietly serve production traffic."""
+    from app.core.config import Settings
+    from app.main import _load_als_index
+
+    ids = sorted(int(item["id"]) for item in catalog)
+    artifact = build_artifact(tmp_path / "als.npz", ids, role="evaluation")
+    settings = Settings(_env_file=None, als_artifact_path=artifact)
+
+    with capture_logs() as logs:
+        assert _load_als_index(settings, catalog) is None
+    events = degradation_events(logs)
+    assert events
+    assert events[0].context["severity"] == "high"
+    assert events[0].context["action"] == "degraded_to_countsketch"
+    assert events[0].context["error_type"] == "ALSArtifactRoleError"
 
 
 def test_invalid_artifact_refuses_to_start_in_strict_mode(tmp_path, catalog):
@@ -204,12 +269,28 @@ def test_invalid_artifact_refuses_to_start_in_strict_mode(tmp_path, catalog):
     from backend.anime_agent.als_serving import ALSArtifactError
 
     ids = sorted(int(item["id"]) for item in catalog)
-    artifact = build_artifact(tmp_path / "als.npz", ids)
+    artifact = build_artifact(tmp_path / "als.npz", ids, role="evaluation")
     settings = Settings(_env_file=None, als_artifact_path=artifact, als_require_valid_artifact=True)
-    unrelated = [{"id": anime_id} for anime_id in range(9000, 9020)]
 
     with pytest.raises(ALSArtifactError):
-        _load_als_index(settings, unrelated)
+        _load_als_index(settings, catalog)
+
+
+def test_pinned_catalog_digest_mismatch_refuses(tmp_path, catalog):
+    """The overlap ratio is fuzzy; a pinned catalog digest is exact."""
+    from app.core.config import Settings
+    from app.main import _load_als_index
+    from backend.anime_agent.als_serving import ALSCatalogMismatchError
+
+    ids = sorted(int(item["id"]) for item in catalog)
+    artifact = build_artifact(tmp_path / "als.npz", ids)
+    settings = Settings(
+        _env_file=None,
+        als_artifact_path=artifact,
+        als_expected_catalog_ids_sha256="0" * 64,
+    )
+    with pytest.raises(ALSCatalogMismatchError, match="Catalog identity mismatch"):
+        _load_als_index(settings, catalog)
 
 
 def test_pinned_checksum_mismatch_always_refuses(tmp_path, catalog):

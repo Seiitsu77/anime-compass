@@ -77,3 +77,17 @@ def catalog() -> list[dict[str, Any]]:
         for anime_id in range(10, 18)
     )
     return values
+
+
+@pytest.fixture(autouse=True)
+def isolate_production_als_artifact(monkeypatch, tmp_path_factory):
+    """Keep tests off the real production ALS artifact.
+
+    Most tests build an app around a small synthetic catalog. The shipped
+    production artifact describes the real 18,064-title catalog, and a catalog
+    mismatch is deliberately fatal, so tests must not pick it up by default.
+    Tests that want an ALS index build their own fixture artifact and pass it
+    explicitly.
+    """
+    absent = tmp_path_factory.mktemp("no-als") / "absent.npz"
+    monkeypatch.setenv("ALS_ARTIFACT_PATH", str(absent))
