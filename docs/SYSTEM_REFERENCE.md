@@ -296,7 +296,7 @@ No React, Redis, Kafka, Kubernetes, authentication layer, GPU training, or open-
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-api.txt
 python -m pip install -e . --no-deps
 Copy-Item .env.example .env
 python run_app.py

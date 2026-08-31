@@ -1,2 +1,2 @@
--r requirements.txt
+-r requirements-api.txt
 sentence-transformers>=5.0,<6

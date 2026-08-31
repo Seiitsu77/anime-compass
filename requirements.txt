@@ -1,7 +1,15 @@
-fastapi>=0.116,<1
-httpx>=0.28,<1
-numpy>=1.26,<3
-pydantic>=2.11,<3
-pydantic-settings>=2.10,<3
-sqlalchemy>=2.0,<3
-uvicorn[standard]>=0.35,<1
+# Streamlit Community Cloud installs this file automatically. It is the
+# demo's complete runtime: streamlit_app.py and every module it reaches
+# import nothing third-party beyond these two.
+#
+# Serving is NumPy-only by design -- no SciPy, no training code, and no ML
+# framework in the web process. The FastAPI service's dependencies live in
+# requirements-api.txt and are deliberately not installed here.
+#
+# Pinned exactly rather than to a range: this file's only job is to make one
+# public page boot the same way every cold start. Verified by a clean-
+# environment install and a browser startup smoke test on Python 3.10; the
+# deployment-smoke CI job repeats the install and import check on 3.12. To
+# refresh, bump both, rerun that smoke test, and commit.
+streamlit==1.62.0
+numpy==2.2.6

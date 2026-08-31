@@ -1,0 +1,9 @@
+# FastAPI service runtime. The Streamlit demo does not use any of this;
+# see requirements.txt, which is what Streamlit Community Cloud installs.
+fastapi>=0.116,<1
+httpx>=0.28,<1
+numpy>=1.26,<3
+pydantic>=2.11,<3
+pydantic-settings>=2.10,<3
+sqlalchemy>=2.0,<3
+uvicorn[standard]>=0.35,<1

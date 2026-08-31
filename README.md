@@ -152,9 +152,11 @@ Each had a predeclared decision rule. Reporting them is the point: the architect
 ```bash
 python -m venv .venv
 .venv/Scripts/activate            # Windows;  source .venv/bin/activate on macOS/Linux
-python -m pip install -r requirements-showcase.txt
-python -m pip install -e . --no-deps
+python -m pip install -r requirements.txt
 ```
+
+`requirements.txt` is the demo's complete runtime, and it is what Streamlit Community Cloud installs
+automatically. The FastAPI service's dependencies are separate, in `requirements-api.txt`.
 
 The demo needs two artifacts that are too large for Git. Either download them from a Hugging Face Dataset repo:
 
@@ -202,7 +204,8 @@ Both are gitignored and fetched at startup over https, then checksum-verified be
 
 1. Push this repository to GitHub.
 2. Upload both files to a stable https host (a Hugging Face Dataset repo works and is free).
-3. Create an app at [share.streamlit.io](https://share.streamlit.io) pointing at `streamlit_app.py`.
+3. Create an app at [share.streamlit.io](https://share.streamlit.io) pointing at `streamlit_app.py`,
+   on Python 3.12. Dependencies come from `requirements.txt` automatically; nothing else is needed.
 4. Set these secrets so the app fetches and verifies both:
 
 ```toml

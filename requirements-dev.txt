@@ -1,4 +1,4 @@
--r requirements.txt
+-r requirements-api.txt
 -r requirements-evaluation.txt
 coverage[toml]>=7.10,<8
 mypy>=1.17,<2

@@ -1,5 +1,5 @@
 # Offline evaluation only. The web application never imports SciPy; the
 # reference collaborative baselines (exact item-item cosine and implicit ALS)
 # use it for sparse matrix algebra.
--r requirements.txt
+-r requirements-api.txt
 scipy>=1.11,<2

@@ -31,3 +31,34 @@ jobs:
         with:
           node-version: "22"
       - run: node --check frontend/app.js
+
+  # Streamlit Community Cloud installs requirements.txt and nothing else. This
+  # job reproduces that exactly, so an import added to the demo's module graph
+  # fails here rather than on the public page.
+  deployment-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Import everything the demo reaches
+        run: |
+          python -c "
+          import importlib
+          for module in (
+              'streamlit',
+              'backend.anime_agent.als_serving',
+              'backend.anime_agent.artifact_bootstrap',
+              'backend.anime_agent.fast_path',
+              'backend.anime_agent.path_policy',
+              'backend.anime_agent.recommender',
+              'backend.anime_agent.retrieval',
+              'backend.anime_agent.routing',
+              'backend.anime_agent.showcase',
+          ):
+              importlib.import_module(module)
+              print('ok', module)
+          "
