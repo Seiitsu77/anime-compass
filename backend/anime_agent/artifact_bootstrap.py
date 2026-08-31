@@ -1,12 +1,13 @@
-"""Fetch and verify the production ALS artifact at startup.
+"""Fetch and verify the deployment payload at startup.
 
-The artifact is 7.1 MB and gitignored, so a hosted deployment has to obtain it
-from somewhere. The risk this module exists to prevent is subtle: a demo that
-advertises the ALS benchmark while quietly falling back to the weaker
-CountSketch model because the download failed.
+A hosted deployment needs two files that are too large for ordinary Git: the
+7.1 MB ALS artifact and the 6.6 MB compact serving catalog. The risk this
+module exists to prevent is subtle: a demo that advertises the ALS benchmark
+while quietly falling back to the weaker CountSketch model because a download
+failed.
 
 So the contract is: fetch, verify, or say so. There is no path where an
-unverified artifact is loaded and presented as the production model.
+unverified file is loaded and presented as the production model.
 
 Only the standard library is used, matching the existing catalog downloader.
 """
@@ -23,8 +24,9 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-# A production artifact is ~7.1 MB. This bound stops a misconfigured URL from
-# streaming something unbounded into a small hosted container.
+# The artifact is ~7.1 MB and the serving catalog ~6.6 MB. This bound stops a
+# misconfigured URL from streaming something unbounded into a small hosted
+# container.
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 ALLOWED_SCHEMES = frozenset({"https"})
 
@@ -143,4 +145,20 @@ def bootstrap_from_environment(default_path: Path) -> BootstrapResult:
         path,
         url=os.environ.get("ALS_ARTIFACT_URL") or None,
         expected_sha256=os.environ.get("ALS_EXPECTED_SHA256") or None,
+    )
+
+
+def bootstrap_catalog_from_environment(default_path: Path) -> BootstrapResult:
+    """Same contract for the serving catalog.
+
+    The catalog gets the identical fetch-verify-or-say-so treatment rather than
+    a looser one. A silently wrong catalog is the failure the ALS loader's
+    identity digest exists to catch, and catching it at download time gives a
+    clearer message than catching it at model load.
+    """
+    path = Path(os.environ.get("SERVING_CATALOG_PATH") or default_path)
+    return ensure_production_artifact(
+        path,
+        url=os.environ.get("SERVING_CATALOG_URL") or None,
+        expected_sha256=os.environ.get("SERVING_CATALOG_EXPECTED_SHA256") or None,
     )

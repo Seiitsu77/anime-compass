@@ -17,12 +17,21 @@ from typing import Any
 
 import streamlit as st
 
-from backend.anime_agent.artifact_bootstrap import bootstrap_from_environment
+from backend.anime_agent.artifact_bootstrap import (
+    bootstrap_catalog_from_environment,
+    bootstrap_from_environment,
+)
 from backend.anime_agent.showcase import ShowcaseService, load_showcase_service
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-CATALOG_PATH = PROJECT_ROOT / "data" / "processed" / "anime_catalog.json"
-DEFAULT_ARTIFACT = PROJECT_ROOT / "data" / "processed" / "als_production_item_factors.npz"
+PROCESSED = PROJECT_ROOT / "data" / "processed"
+# The compact serving catalog carries only the fields this page reads: 6.6 MB
+# instead of 119 MB, for identical recommendations. The full catalog, which the
+# constraint-rich Hybrid needs for entity joins, is used when it is the only one
+# present, so a local checkout works either way.
+SERVING_CATALOG = PROCESSED / "anime_catalog_serving.json"
+FULL_CATALOG = PROCESSED / "anime_catalog.json"
+DEFAULT_ARTIFACT = PROCESSED / "als_production_item_factors.npz"
 
 st.set_page_config(
     page_title="Anime Recommendation System",
@@ -58,7 +67,15 @@ def get_service() -> ShowcaseService:
     cache_resource rather than cache_data: the loaded index holds NumPy arrays
     and a cached Gram matrix that must not be copied per session.
     """
-    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    catalog_bootstrap = bootstrap_catalog_from_environment(SERVING_CATALOG)
+    catalog_path = catalog_bootstrap.path if catalog_bootstrap.usable else FULL_CATALOG
+    if not catalog_path.exists():
+        raise FileNotFoundError(
+            f"No catalog found. Expected {SERVING_CATALOG.name} or {FULL_CATALOG.name} under "
+            f"{PROCESSED}, or a SERVING_CATALOG_URL to fetch one. Detail: {catalog_bootstrap.detail}"
+        )
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+
     bootstrap = bootstrap_from_environment(DEFAULT_ARTIFACT)
     service = load_showcase_service(
         catalog,
@@ -68,6 +85,7 @@ def get_service() -> ShowcaseService:
         require_production=os.environ.get("ALS_EXPECTED_ROLE", "production") == "production",
     )
     service.health.error = service.health.error or (None if bootstrap.usable else bootstrap.detail)
+    service.catalog_source = catalog_path.name
     return service
 
 
@@ -369,6 +387,7 @@ def health_panel(service: ShowcaseService) -> None:
             f"- **Covered by the trained model:** {health.als_covered_items:,}\n"
             f"- **Cold-start items (searchable, never given a model score):** {health.cold_start_items:,}\n"
             f"- **Model load time:** {health.load_seconds:.2f} s\n"
+            f"- **Catalog file:** {service.catalog_source}\n"
             f"- **Fast path ready:** {'yes' if health.serving_production_als else 'no'}"
         )
         if health.artifact_sha256:
