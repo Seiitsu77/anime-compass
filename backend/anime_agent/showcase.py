@@ -111,6 +111,21 @@ def _fold(text: str) -> str:
     return "".join(ch for ch in normalized if not unicodedata.combining(ch)).casefold()
 
 
+# The demo shows a short synopsis, so the serving catalog ships them already
+# trimmed. This function is the single definition of that trim and is
+# idempotent, which is what makes a pre-trimmed catalog provably identical to
+# the full one at the display layer.
+SYNOPSIS_DISPLAY_CHARS = 200
+
+
+def truncate_synopsis(text: Any, limit: int = SYNOPSIS_DISPLAY_CHARS) -> str:
+    """Trim a synopsis to display length. Applying it twice changes nothing."""
+    synopsis = str(text or "")
+    if len(synopsis) <= limit:
+        return synopsis
+    return synopsis[: limit - 3].rstrip() + "..."
+
+
 class ShowcaseService:
     """Search the catalog and produce explained recommendations."""
 
@@ -125,6 +140,10 @@ class ShowcaseService:
         self.catalog = list(catalog)
         self.als_index = als_index
         self.health = health
+        # Which catalog file the deployment actually loaded. The compact serving
+        # catalog and the full one produce identical recommendations, so the
+        # health panel names the file rather than leaving it ambiguous.
+        self.catalog_source: str = "unknown"
         self.config = config or FastPathConfig()
         self.by_id: dict[int, Mapping[str, Any]] = {int(item["id"]): item for item in self.catalog}
         self._search_keys = [(int(item["id"]), _fold(item.get("title", ""))) for item in self.catalog]
@@ -303,9 +322,7 @@ class ShowcaseService:
         else:
             explanation = "Ranked highly for your overall profile."
 
-        synopsis = str(item.get("synopsis") or "")
-        if len(synopsis) > 200:
-            synopsis = synopsis[:197].rstrip() + "..."
+        synopsis = truncate_synopsis(item.get("synopsis"))
 
         return Recommendation(
             anime_id=int(anime_id),
