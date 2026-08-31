@@ -324,6 +324,24 @@ def test_bootstrap_reads_the_environment(tmp_path, monkeypatch):
     assert result.usable and result.path == path
 
 
+def test_repository_checksum_is_used_when_environment_pin_is_absent(tmp_path, monkeypatch):
+    import backend.anime_agent.artifact_bootstrap as bootstrap
+
+    path = tmp_path / "artifact.npz"
+    path.write_bytes(b"payload")
+    # The autouse fixture points ALS_ARTIFACT_PATH at an absent file, and that
+    # env var wins over the default path, so it has to be redirected here.
+    monkeypatch.setenv("ALS_ARTIFACT_PATH", str(path))
+    monkeypatch.delenv("ALS_ARTIFACT_URL", raising=False)
+    monkeypatch.delenv("ALS_EXPECTED_SHA256", raising=False)
+
+    good = hashlib.sha256(b"payload").hexdigest()
+    assert bootstrap.bootstrap_from_environment(path, default_expected_sha256=good).usable
+    rejected = bootstrap.bootstrap_from_environment(path, default_expected_sha256="0" * 64)
+    assert not rejected.usable
+    assert "checksum mismatch" in rejected.detail
+
+
 # ----------------------------------------------------------- no LLM needed
 
 

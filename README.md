@@ -1,23 +1,15 @@
----
-title: Anime Compass
-colorFrom: green
-colorTo: red
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Anime Recommendation System
 
 A production-style personalized anime recommender built on 57M+ historical ratings. Pick a few titles you
 like and it ranks the full ~18,000-item catalog against your profile in about two milliseconds, using a tuned
-implicit-feedback ALS model trained on 30.9M positive interactions. The interesting part is not the model — it is
-the evidence trail behind it: every architectural decision here was made by a controlled offline experiment with a
-predeclared decision rule, and several promising ideas were measured, rejected, and documented.
+implicit-feedback ALS model trained on 30.9M positive interactions. The interesting part is not only the model — it
+is the evidence trail behind it: the major model and routing decisions were made with controlled offline experiments,
+including predeclared confirmation rules, and several promising ideas were measured, rejected, and documented.
 
 ## Live Demo
 
-**[Deployment link — see Deployment below to publish]**
+The repository is ready for Streamlit Community Cloud. Add the public URL here after connecting the GitHub repository
+as described in [Deployment](#deployment).
 
 No login, no account, no API key. Load an example profile, click Recommend, and inspect the model results and
 architecture from the same page.
@@ -65,8 +57,6 @@ The demo is a single Streamlit page:
 4. **Under the hood** — collapsible sections for architecture, model results, evaluation protocol, rejected
    experiments, and deployment health.
 
-_Screenshots: add `docs/screenshots/demo-landing.png` and `docs/screenshots/demo-results.png` after first deploy._
-
 ## Architecture
 
 ```text
@@ -107,8 +97,9 @@ constraints — a studio, a voice actor, a year window — that need exact catal
 Exact item-item and LightFM-ID were measured on an earlier 1,000-user sample; the rest come from 800-user
 confirmation samples. Populations differ, so cross-row gaps are indicative rather than paired.
 
-Tuning mattered more than architecture: stock ALS defaults scored 0.1841, and a validation-only sweep over
-`alpha` and factor count took the same model family to 0.2624 — **+42.6% from hyperparameters alone**.
+Tuning mattered: on the same 800 validation users, the stock-like 64-factor, `alpha=40` configuration scored
+0.2032 NDCG@10, while the selected 128-factor, `alpha=5` configuration scored 0.2787 — a **37.2% validation
+gain** before the untouched confirmation set was opened.
 
 ## Evaluation
 
@@ -139,7 +130,7 @@ Each had a predeclared decision rule. Reporting them is the point: the architect
 
 ## Engineering
 
-- **393 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
+- **395 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
 - **Artifact integrity**: SHA-256 pinning, catalog-digest pinning, and role separation between the evaluation and
   production models. A catalog mismatch refuses startup rather than silently serving a stale model.
 - **NumPy-only serving.** No SciPy, no training code, and no ML framework in the web process.
@@ -149,71 +140,81 @@ Each had a predeclared decision rule. Reporting them is the point: the architect
 
 ## Run Locally
 
-```bash
+Windows PowerShell:
+
+```powershell
 python -m venv .venv
-.venv/Scripts/activate            # Windows;  source .venv/bin/activate on macOS/Linux
+./.venv/Scripts/Activate.ps1
 python -m pip install -r requirements.txt
+python -m streamlit run streamlit_app.py
+```
+
+macOS or Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m streamlit run streamlit_app.py
 ```
 
 `requirements.txt` is the demo's complete runtime, and it is what Streamlit Community Cloud installs
-automatically. The FastAPI service's dependencies are separate, in `requirements-api.txt`.
+automatically.
 
-The demo needs two artifacts that are too large for Git. Either download them from a Hugging Face Dataset repo:
+The demo needs two artifacts that are too large for Git. Fetch them from the Hugging Face Dataset repo
+listed under [Deployment](#deployment) into `data/processed/`, or set `ALS_ARTIFACT_URL` and
+`SERVING_CATALOG_URL` and let the app download them on first run. Either way they are checksum-verified
+against `data/artifacts.manifest.json` before use. No API key is needed.
 
-```bash
-python scripts/download_artifacts.py --repo-id YOUR_HF_USERNAME/anime-compass-data
+The serving catalog holds only the ten fields the demo reads, which is 6.6 MB
+instead of 119 MB for identical recommendations. The demo falls back to the full
+catalog when only that is present, which is what a development checkout usually has.
+
+The complete FastAPI/agent application has a separate runtime and needs the full
+catalog artifacts described in [`docs/SYSTEM_REFERENCE.md`](docs/SYSTEM_REFERENCE.md):
+
+```powershell
+python -m pip install -r requirements-api.txt
+python run_app.py
 ```
 
-or rebuild locally from the CC0 Kaggle CSVs:
+To rebuild the two demo artifacts from the raw CC0 files instead of downloading them, install the
+offline dependencies and run:
 
 ```bash
+python -m pip install -r requirements-evaluation.txt
 python scripts/prepare_data.py
 python scripts/build_production_als.py
 python scripts/verify_production_als.py
-```
-
-Then build the compact serving catalog and start the demo:
-
-```bash
 python scripts/build_serving_catalog.py
 ```
-
-```bash
-streamlit run streamlit_app.py
-```
-
-The serving catalog holds only the ten fields the demo reads, which is 6.6 MB
-instead of 119 MB for identical recommendations. It is optional locally — the demo
-falls back to the full catalog — but it is what a deployment should ship.
-
-The FastAPI service is unchanged and still runs with `python run_app.py`.
 
 ## Deployment
 
 **Streamlit Community Cloud.** The demo imports the recommendation core directly rather than calling FastAPI over
 HTTP — both would run in the same process, so the extra hop would add a failure mode and nothing else.
 
-The deployment payload is two files, 14 MB in total:
+The deployment payload is two files, about 14 MB in total:
 
 | File | Size | SHA-256 |
 |---|---:|---|
 | `als_production_item_factors.npz` | 7.4 MB | `95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10` |
 | `anime_catalog_serving.json` | 6.6 MB | `4b11cf3e5f3d015ed071232e569068248af709e7979e561194b451e3ac716bf3` |
 
-Both are gitignored and fetched at startup over https, then checksum-verified before use.
+Both are hosted in a public Hugging Face Dataset repo and fetched over https at startup, then verified
+before use. Only the two URLs go in Streamlit secrets: the expected checksums are already pinned in
+`data/artifacts.manifest.json`, and the model embeds the exact catalog-ID digest it was trained against, so
+a changed catalog is rejected even when more than 90% of IDs still overlap.
 
 1. Push this repository to GitHub.
-2. Upload both files to a stable https host (a Hugging Face Dataset repo works and is free).
+2. Upload both files to a public Hugging Face Dataset repo (see [docs/PUBLISHING.md](docs/PUBLISHING.md)).
 3. Create an app at [share.streamlit.io](https://share.streamlit.io) pointing at `streamlit_app.py`,
-   on Python 3.12. Dependencies come from `requirements.txt` automatically; nothing else is needed.
-4. Set these secrets so the app fetches and verifies both:
+   on Python 3.12. Dependencies come from `requirements.txt` automatically.
+4. Set two secrets, replacing `YOUR_HF_USERNAME/anime-compass-data` with your Dataset repo:
 
 ```toml
-ALS_ARTIFACT_URL = "https://.../als_production_item_factors.npz"
-ALS_EXPECTED_SHA256 = "95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10"
-ALS_EXPECTED_CATALOG_IDS_SHA256 = "0ab8367a4c8a10a84d8c28cb358ef57f0428ff8df1f7f4ad83342fccdf6a1be5"
-SERVING_CATALOG_URL = "https://.../anime_catalog_serving.json"
-SERVING_CATALOG_EXPECTED_SHA256 = "4b11cf3e5f3d015ed071232e569068248af709e7979e561194b451e3ac716bf3"
+ALS_ARTIFACT_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/als_production_item_factors.npz"
+SERVING_CATALOG_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/anime_catalog_serving.json"
 ```
 
 If either file cannot be fetched or fails verification, the demo shows a clear model-unavailable state. It never
@@ -240,7 +241,7 @@ app/                              FastAPI service
 scripts/                          build, evaluate, verify, migrate, compact
 docs/                             architecture, evaluation, portfolio summary
 data/evaluation/personalized/     experiment reports and decision records
-tests/                            393 tests
+tests/                            395 tests
 ```
 
 ## Data And License

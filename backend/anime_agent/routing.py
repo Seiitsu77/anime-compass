@@ -11,10 +11,10 @@ the user has. The offline evidence is specific about this:
 
 (Activity-balanced diagnostic, 100 users per segment, threshold 8.)
 
-So ALS is the right default for users with history, and for sparse users the
-evidence does not support a switch. Sparse users are routed to CountSketch,
-which additionally is the only cheap source with any tail exposure -- ALS puts
-100% of its exposure in the top 20% most popular items.
+ALS is therefore the global default. An earlier policy routed sparse users to
+CountSketch, but a direct production-architecture test later found that policy
+reduced sparse-user NDCG@10 from 0.2003 to 0.1660 (n=30). Segment-aware routing
+is retained as an opt-in experiment and is disabled by default.
 
 The thresholds mirror the offline activity segmentation, but are applied to a
 *live* profile: a session's known positives, not a training row. They are

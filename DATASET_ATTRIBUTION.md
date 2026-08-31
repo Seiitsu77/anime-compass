@@ -25,4 +25,5 @@ those fields for matching MAL IDs and to retain newer catalog entries. Its raw f
 are no longer required by the application.
 
 Generated artifacts are hosted separately in a Hugging Face Dataset repository and
-verified against `data/artifacts.manifest.json` before use.
+verified against `data/artifacts.manifest.json` before use. That covers the two files
+the Streamlit demo needs as well as the larger research artifacts.

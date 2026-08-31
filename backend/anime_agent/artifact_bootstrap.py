@@ -1,10 +1,10 @@
 """Fetch and verify the deployment payload at startup.
 
-A hosted deployment needs two files that are too large for ordinary Git: the
-7.1 MB ALS artifact and the 6.6 MB compact serving catalog. The risk this
-module exists to prevent is subtle: a demo that advertises the ALS benchmark
-while quietly falling back to the weaker CountSketch model because a download
-failed.
+A hosted deployment needs a 7.1 MB ALS artifact and a 6.6 MB compact serving
+catalog. They can be bundled with a small demo repository or fetched from an
+artifact host. The risk this module exists to prevent is subtle: a demo that
+advertises the ALS benchmark while quietly falling back to the weaker
+CountSketch model because a file is missing or corrupted.
 
 So the contract is: fetch, verify, or say so. There is no path where an
 unverified file is loaded and presented as the production model.
@@ -138,17 +138,25 @@ def ensure_production_artifact(
     return BootstrapResult(path, True, True, True, "downloaded (no checksum pinned)")
 
 
-def bootstrap_from_environment(default_path: Path) -> BootstrapResult:
-    """Read the deployment's artifact configuration from the environment."""
+def bootstrap_from_environment(
+    default_path: Path,
+    *,
+    default_expected_sha256: str | None = None,
+) -> BootstrapResult:
+    """Read artifact configuration, retaining a repository-pinned checksum."""
     path = Path(os.environ.get("ALS_ARTIFACT_PATH") or default_path)
     return ensure_production_artifact(
         path,
         url=os.environ.get("ALS_ARTIFACT_URL") or None,
-        expected_sha256=os.environ.get("ALS_EXPECTED_SHA256") or None,
+        expected_sha256=os.environ.get("ALS_EXPECTED_SHA256") or default_expected_sha256,
     )
 
 
-def bootstrap_catalog_from_environment(default_path: Path) -> BootstrapResult:
+def bootstrap_catalog_from_environment(
+    default_path: Path,
+    *,
+    default_expected_sha256: str | None = None,
+) -> BootstrapResult:
     """Same contract for the serving catalog.
 
     The catalog gets the identical fetch-verify-or-say-so treatment rather than
@@ -160,5 +168,5 @@ def bootstrap_catalog_from_environment(default_path: Path) -> BootstrapResult:
     return ensure_production_artifact(
         path,
         url=os.environ.get("SERVING_CATALOG_URL") or None,
-        expected_sha256=os.environ.get("SERVING_CATALOG_EXPECTED_SHA256") or None,
+        expected_sha256=os.environ.get("SERVING_CATALOG_EXPECTED_SHA256") or default_expected_sha256,
     )

@@ -1,5 +1,10 @@
 # ALS Standalone Confirmation: Result
 
+> **Historical phase record.** This report captures the standalone confirmation
+> gate before threshold, tail, and architecture tests were run. Those later
+> experiments are complete; ALS is now the global default for unconstrained
+> personalized requests. See `docs/ARCHITECTURE.md` for the shipped decision.
+
 ## Outcome
 
 **ALS passes standalone confirmation on all four predeclared gates.**

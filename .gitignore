@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+# Any other local virtualenv (.audit-venv, .lightfm-env, ...).
+.*-venv/
+.*-env/
 .lightfm-env/
 .tools/
 .pytest_cache/

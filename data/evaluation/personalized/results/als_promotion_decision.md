@@ -1,5 +1,11 @@
 # ALS Promotion Decision: Complete Evidence
 
+> **Superseded routing decision.** The model findings and measurements below are
+> retained as the experiment record. A later direct production-architecture
+> benchmark found that segment-aware routing reduced sparse-user NDCG@10
+> (0.2003 to 0.1660), so it is disabled and global ALS is the shipped default.
+> See `docs/ARCHITECTURE.md` and `production_architecture/` for the final policy.
+
 ## Decision
 
 **Do not promote ALS as a drop-in replacement for CountSketch. Adopt

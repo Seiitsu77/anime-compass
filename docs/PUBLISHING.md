@@ -1,76 +1,97 @@
 # Publishing Anime Compass
 
-Use GitHub for source code and a public Hugging Face Dataset repository for the generated catalog artifacts. This keeps the Git repository reviewable while making local runs and Docker Spaces reproducible.
+The portfolio deployment uses GitHub for source, a public Hugging Face Dataset
+repository for the two serving artifacts, and Streamlit Community Cloud for the
+public demo. Keeping the artifacts out of Git keeps the repository reviewable;
+they are checksum-verified after download, so a wrong or partial file is never
+served.
 
-## 1. Create the repositories
+## 1. GitHub repository
 
-Create these public repositories after your accounts are ready:
+Use the public repository `anime-compass` for source, tests, evaluation reports,
+and documentation. Keep the MIT license for source code; the dataset-derived
+artifacts retain the CC0 attribution in
+[`DATASET_ATTRIBUTION.md`](../DATASET_ATTRIBUTION.md).
 
-| Platform | Suggested name | Purpose |
-|---|---|---|
-| GitHub | `anime-compass` | Source, tests, CI, screenshots, and documentation |
-| Hugging Face Dataset | `anime-compass-data` | Generated catalog and collaborative-model artifacts |
-| Hugging Face Space | `anime-compass` | Public Docker demo |
+Before pushing, verify that credentials and raw data are absent:
 
-Choose **CC0-1.0** for the Dataset repository because the processed files derive from the CC0 source dataset. Keep the source-code repository under the included MIT license.
+```powershell
+git status
+git ls-files .env archive data/raw
+git grep -l -I -E "BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|AIza|AQ\."
+```
 
-## 2. Upload the runtime artifacts
+The last two commands should not list a credential or a raw CSV. The scan
+matches this file itself, because the pattern is written here; any other hit is
+worth investigating. `git status` should show no file under `data/processed`
+other than `.gitkeep`.
 
-Install the Hugging Face CLI, authenticate, and upload the two ignored files:
+## 2. Hugging Face Dataset repository
+
+Create a public Dataset repo named `anime-compass-data`, licensed **CC0-1.0**
+because the processed files derive from the CC0 source dataset. Upload the two
+files the demo needs:
 
 ```powershell
 python -m pip install -U huggingface_hub
-hf auth login
-hf upload YOUR_HF_USERNAME/anime-compass-data data/processed/anime_catalog.json anime_catalog.json --repo-type dataset
-hf upload YOUR_HF_USERNAME/anime-compass-data data/processed/collaborative_embeddings.npz collaborative_embeddings.npz --repo-type dataset
+huggingface-cli login
+huggingface-cli upload YOUR_HF_USERNAME/anime-compass-data data/processed/als_production_item_factors.npz als_production_item_factors.npz --repo-type=dataset
+huggingface-cli upload YOUR_HF_USERNAME/anime-compass-data data/processed/anime_catalog_serving.json anime_catalog_serving.json --repo-type=dataset
 ```
 
-Do not commit those generated files to GitHub. The catalog is about 114 MiB, and the collaborative index is about 14 MiB. Anime Compass validates both size and SHA-256 against `data/artifacts.manifest.json`.
+Their sizes and SHA-256 values are pinned in
+[`data/artifacts.manifest.json`](../data/artifacts.manifest.json), so the demo
+rejects a file that does not match. Confirm both resolve URLs return 200 before
+deploying:
 
-Test a clean download before publishing:
+```text
+https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/als_production_item_factors.npz
+https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/anime_catalog_serving.json
+```
+
+## 3. Streamlit Community Cloud
+
+1. Sign in to [Streamlit Community Cloud](https://share.streamlit.io) with the
+   GitHub account that owns the repository.
+2. Create an app from the `main` branch.
+3. Set the entry point to `streamlit_app.py` and choose Python 3.12.
+4. Add these two secrets, then deploy. `requirements.txt` supplies the complete
+   two-package direct runtime, and the checksums come from the manifest, so no
+   other secret is needed.
+
+   ```toml
+   ALS_ARTIFACT_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/als_production_item_factors.npz"
+   SERVING_CATALOG_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/anime_catalog_serving.json"
+   ```
+5. Load an example profile, request recommendations, and open **Deployment
+   health**. It should report `Production ALS`, a verified artifact, 18,064
+   catalog items, and `Fast path ready: yes`.
+
+After deployment, add the public URL to the README and the GitHub repository's
+About panel. A short screenshot or GIF is useful, but only after it reflects the
+actual deployed page.
+
+## 4. The rest of the artifacts
+
+The same Dataset repo can carry the artifacts the full FastAPI/agent application
+needs — the 119 MB catalog and the optional evaluation files. Never upload `.env`
+or an API key. The existing downloader validates every file against the manifest:
 
 ```powershell
 python scripts/download_artifacts.py --repo-id YOUR_HF_USERNAME/anime-compass-data
 ```
 
-The command reports `verified` without downloading when the local files already match.
+A failed download or checksum leaves the model unavailable rather than silently
+serving a different recommender.
 
-## 3. Publish the source to GitHub
+## 5. Portfolio checklist
 
-Review the staged files, make the first commit, then connect the new empty repository:
-
-```powershell
-git status
-git add .
-git commit -m "Build explainable anime recommendation agent"
-git remote add origin https://github.com/YOUR_GITHUB_USERNAME/anime-compass.git
-git push -u origin main
-```
-
-Before the first push, confirm that `.env`, `anime_catalog.json`, `collaborative_embeddings.npz`, and the raw `archive/*.csv` files are absent from `git ls-files`. Add a repository description, topics such as `recommendation-system`, `collaborative-filtering`, `fastapi`, `llm-agent`, `information-retrieval`, and `machine-learning`, plus the deployed Space URL.
-
-## 4. Deploy the Docker Space
-
-Create a Docker Space named `anime-compass`, then copy the GitHub source into the Space repository. Configure these Space variables:
-
-```text
-HF_DATASET_REPO=YOUR_HF_USERNAME/anime-compass-data
-HF_DATASET_REVISION=main
-LLM_PROVIDER=gemini
-COLLABORATIVE_ENABLED=true
-EMBEDDING_PROVIDER=none
-```
-
-Add `GEMINI_API_KEY` as a **secret**, never as a variable or committed file. At container startup, the app downloads and checksum-verifies missing artifacts from the public Dataset repository. Search, filters, ranking, recommendations, and details still work through deterministic fallbacks if the LLM provider is unavailable.
-
-After deployment, check:
-
-- `/api/ready` returns `200`.
-- `/api/health` reports the catalog, database, providers, and collaborative index.
-- Search pagination plus exact studio/format and include/exclude filters work.
-- The Agent returns catalog-grounded titles and degrades gracefully when the provider is unavailable.
-- The Space URL is linked from the GitHub About panel and README.
-
-## 5. Finish the portfolio presentation
-
-Add one short demo GIF or a current screenshot, pin the GitHub repository, and use claims you can defend in an interview. The offline evaluation is intentionally labeled as a small engineering proxy; do not describe it as evidence of user satisfaction or state-of-the-art recommendation quality.
+- Pin the GitHub repository and add topics such as `recommendation-system`,
+  `collaborative-filtering`, `streamlit`, `fastapi`, `information-retrieval`,
+  and `machine-learning`.
+- Link the Streamlit app from GitHub and the resume.
+- Keep claims tied to committed reports: offline metrics are not evidence of
+  real-user satisfaction or state-of-the-art performance.
+- Be ready to explain the data split, full-catalog protocol, model-role
+  separation, artifact verification, negative experiments, and the lack of
+  interaction timestamps.

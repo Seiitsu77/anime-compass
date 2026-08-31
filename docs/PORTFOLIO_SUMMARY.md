@@ -68,8 +68,8 @@ were missing, so I added them: exact adjusted-cosine item-item, which isolates
 what the projection costs, and implicit ALS, the standard latent-factor
 reference. ALS won. Critically, the initial ALS numbers came from stock
 hyperparameters; a validation-only sweep found `alpha` was badly mis-set, and
-tuning alone took NDCG@10 from 0.1841 to 0.2624. The baseline was untuned long
-before it was under-powered.
+tuning moved validation NDCG@10 from 0.2032 to 0.2787 on the same 800 users
+(+37.2%). The baseline was untuned long before it was under-powered.
 
 **Discipline around confirmation.** Every confirmation sample excludes all users
 any earlier experiment scored — 3,706 by the end — with disjointness asserted in

@@ -25,6 +25,7 @@ from backend.anime_agent.showcase import ShowcaseService, load_showcase_service
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PROCESSED = PROJECT_ROOT / "data" / "processed"
+ARTIFACT_MANIFEST = PROJECT_ROOT / "data" / "artifacts.manifest.json"
 # The compact serving catalog carries only the fields this page reads: 6.6 MB
 # instead of 119 MB, for identical recommendations. The full catalog, which the
 # constraint-rich Hybrid needs for entity joins, is used when it is the only one
@@ -67,7 +68,21 @@ def get_service() -> ShowcaseService:
     cache_resource rather than cache_data: the loaded index holds NumPy arrays
     and a cached Gram matrix that must not be copied per session.
     """
-    catalog_bootstrap = bootstrap_catalog_from_environment(SERVING_CATALOG)
+    manifest = json.loads(ARTIFACT_MANIFEST.read_text(encoding="utf-8"))
+    if manifest.get("schema_version") != 1 or not isinstance(manifest.get("artifacts"), dict):
+        raise ValueError("data/artifacts.manifest.json is malformed or unsupported")
+    try:
+        catalog_record = manifest["artifacts"][SERVING_CATALOG.name]
+        model_record = manifest["artifacts"][DEFAULT_ARTIFACT.name]
+        catalog_sha256 = str(catalog_record["sha256"])
+        model_sha256 = str(model_record["sha256"])
+    except (KeyError, TypeError) as exc:
+        raise ValueError("The deployment artifacts are not pinned in data/artifacts.manifest.json") from exc
+
+    catalog_bootstrap = bootstrap_catalog_from_environment(
+        SERVING_CATALOG,
+        default_expected_sha256=catalog_sha256,
+    )
     catalog_path = catalog_bootstrap.path if catalog_bootstrap.usable else FULL_CATALOG
     if not catalog_path.exists():
         raise FileNotFoundError(
@@ -76,11 +91,15 @@ def get_service() -> ShowcaseService:
         )
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
 
-    bootstrap = bootstrap_from_environment(DEFAULT_ARTIFACT)
+    bootstrap = bootstrap_from_environment(
+        DEFAULT_ARTIFACT,
+        default_expected_sha256=model_sha256,
+    )
+    expected_model_sha256 = os.environ.get("ALS_EXPECTED_SHA256") or model_sha256
     service = load_showcase_service(
         catalog,
         bootstrap.path,
-        expected_sha256=os.environ.get("ALS_EXPECTED_SHA256") or None,
+        expected_sha256=expected_model_sha256,
         expected_catalog_ids_sha256=os.environ.get("ALS_EXPECTED_CATALOG_IDS_SHA256") or None,
         require_production=os.environ.get("ALS_EXPECTED_ROLE", "production") == "production",
     )
@@ -115,7 +134,7 @@ def hero() -> None:
     st.markdown(
         "Pick a few titles you like. The system builds a preference profile with a tuned "
         "implicit-feedback ALS model and ranks the full ~18,000-title catalog against it. "
-        "Requests with explicit constraints route to a richer pipeline instead."
+        "The full FastAPI application also routes explicit catalog constraints to a richer pipeline."
     )
 
 
@@ -128,8 +147,9 @@ def model_unavailable(service: ShowcaseService) -> None:
     with st.expander("Details for whoever is deploying this"):
         st.write(service.health.error or "No further detail was recorded.")
         st.markdown(
-            "Set `ALS_ARTIFACT_URL` to an https location serving "
-            "`als_production_item_factors.npz`, plus `ALS_EXPECTED_SHA256` to pin it. "
+            "Set `ALS_ARTIFACT_URL` and `SERVING_CATALOG_URL` to HTTPS locations serving "
+            "`als_production_item_factors.npz` and `anime_catalog_serving.json`, or place both "
+            "under `data/processed`. Checksums are pinned in `data/artifacts.manifest.json`. "
             "See the Deployment section of the README."
         )
 
@@ -143,7 +163,7 @@ def picker(service: ShowcaseService) -> None:
         columns = st.columns(len(profiles))
         for column, (name, (description, ids)) in zip(columns, profiles.items(), strict=False):
             with column:
-                if st.button(name, use_container_width=True, help=description):
+                if st.button(name, width="stretch", help=description):
                     st.session_state.liked = list(ids)
                     st.session_state.results = None
                     st.rerun()
@@ -161,7 +181,7 @@ def picker(service: ShowcaseService) -> None:
                 f"**{item['title']}**  \n<span class='rec-meta'>{year} · {item.get('type') or '—'}</span>",
                 unsafe_allow_html=True,
             )
-            if button.button("Like", key=f"like-{anime_id}", use_container_width=True):
+            if button.button("Like", key=f"like-{anime_id}", width="stretch"):
                 if anime_id not in st.session_state.liked:
                     st.session_state.liked.append(anime_id)
                     st.session_state.results = None
@@ -174,7 +194,7 @@ def picker(service: ShowcaseService) -> None:
             row, button = st.columns([5, 1])
             cold = " · not in the trained model" if service.is_cold_start(anime_id) else ""
             row.markdown(f"✅ {service.title_of(anime_id)}<span class='rec-meta'>{cold}</span>", unsafe_allow_html=True)
-            if button.button("Remove", key=f"drop-{anime_id}", use_container_width=True):
+            if button.button("Remove", key=f"drop-{anime_id}", width="stretch"):
                 st.session_state.liked.remove(anime_id)
                 st.session_state.results = None
                 st.rerun()
@@ -182,15 +202,15 @@ def picker(service: ShowcaseService) -> None:
         st.info("Add at least one title, or load an example profile above.")
 
 
-def controls(service: ShowcaseService) -> tuple[int, str]:
-    with st.expander("Optional: exclusions and a natural-language request"):
+def controls(service: ShowcaseService) -> int:
+    with st.expander("Optional: exclusions and result count"):
         exclude_query = st.text_input("Exclude a title", placeholder="Search a title to exclude")
         if exclude_query:
             for item in service.search(exclude_query, limit=5):
                 anime_id = int(item["id"])
                 row, button = st.columns([5, 1])
                 row.write(item["title"])
-                if button.button("Exclude", key=f"ex-{anime_id}", use_container_width=True):
+                if button.button("Exclude", key=f"ex-{anime_id}", width="stretch"):
                     if anime_id not in st.session_state.disliked:
                         st.session_state.disliked.append(anime_id)
                         st.session_state.results = None
@@ -201,25 +221,13 @@ def controls(service: ShowcaseService) -> tuple[int, str]:
                 st.session_state.disliked = []
                 st.rerun()
 
-        llm_ready = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("OLLAMA_BASE_URL"))
-        free_text = st.text_input(
-            "Anything else you're looking for?",
-            placeholder="e.g. something dark and psychological, under 24 episodes",
-            disabled=not llm_ready,
-        )
-        if not llm_ready:
-            st.caption(
-                "Natural-language constraint parsing needs an LLM provider, which this deployment "
-                "has not configured. Profile-based recommendations below work without it."
-            )
-            free_text = ""
         count = st.slider("How many recommendations", 4, 24, 12, step=4)
-    return count, free_text
+    return count
 
 
 def poster(item: Any) -> None:
     if item.image_url:
-        st.image(item.image_url, use_container_width=True)
+        st.image(item.image_url, width="stretch")
     else:
         st.markdown('<div class="poster-fallback">No poster<br/>in the CC0 dataset</div>', unsafe_allow_html=True)
 
@@ -258,6 +266,7 @@ def render_results(service: ShowcaseService) -> None:
 
 def how_it_works() -> None:
     with st.expander("How it works"):
+        st.caption("Full repository architecture; this Streamlit page exercises the production ALS path directly.")
         st.markdown(
             """
 ```text
@@ -398,20 +407,31 @@ def health_panel(service: ShowcaseService) -> None:
 
 def main() -> None:
     init_state()
-    service = get_service()
     hero()
     st.divider()
+
+    try:
+        service = get_service()
+    except (OSError, ValueError) as exc:
+        st.error("The verified demo assets could not be loaded, so recommendations are unavailable.")
+        with st.expander("Deployment details"):
+            st.code(f"{type(exc).__name__}: {exc}")
+            st.markdown(
+                "Check `ALS_ARTIFACT_URL` and `SERVING_CATALOG_URL`, or the two files under "
+                "`data/processed`, against their entries in `data/artifacts.manifest.json`."
+            )
+        st.stop()
 
     if not service.health.serving_production_als:
         model_unavailable(service)
     else:
         picker(service)
-        count, free_text = controls(service)
+        count = controls(service)
         st.write("")
         if st.button(
             "Recommend",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=not st.session_state.liked,
         ):
             with st.spinner("Ranking the full catalog…"):
@@ -419,7 +439,6 @@ def main() -> None:
                     st.session_state.liked,
                     disliked_ids=st.session_state.disliked,
                     limit=count,
-                    free_text=free_text,
                 )
         render_results(service)
 

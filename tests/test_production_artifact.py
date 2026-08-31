@@ -244,12 +244,19 @@ def test_catalog_drift_beyond_tolerance_is_refused(production_artifact):
 
 def test_pinned_catalog_digest_catches_drift_the_ratio_would_miss(production_artifact, catalog):
     """Overlap can stay high while the catalog identity changes."""
-    with pytest.raises(ALSCatalogMismatchError, match="Catalog identity mismatch"):
+    with pytest.raises(ALSCatalogMismatchError, match="catalog pin mismatch"):
         ALSCollaborativeIndex.load(production_artifact, catalog, expected_catalog_ids_sha256="0" * 64)
 
     exact = catalog_ids_digest(sorted(int(item["id"]) for item in catalog))
     index = ALSCollaborativeIndex.load(production_artifact, catalog, expected_catalog_ids_sha256=exact)
     assert index.model_info()["items"] == len(catalog)
+
+
+def test_artifact_catalog_digest_is_enforced_without_environment_pin(production_artifact, catalog):
+    """The model's own provenance must reject subtle catalog drift by default."""
+    drifted = [*catalog, {"id": 7, "genres": ["Action"]}]
+    with pytest.raises(ALSCatalogMismatchError, match="Catalog identity mismatch"):
+        ALSCollaborativeIndex.load(production_artifact, drifted)
 
 
 def test_pinned_artifact_hash_is_enforced(production_artifact, catalog):

@@ -79,11 +79,13 @@ from and no temporal dynamics.
 
 ## What actually moved the number
 
-Tuning, not architecture. The stock ALS defaults (64 factors, alpha 40) scored
-NDCG@10 0.1841. A validation-only sweep found alpha was badly mis-set and that
-capacity mattered; at 128 factors and alpha 5.0 the same model family scores
-0.2875 — a **+56% relative improvement from hyperparameters alone**, and +75%
-over the production CountSketch channel.
+Tuning, not a new model family. On the same 800 validation users, the
+64-factor, alpha-40 candidate scored NDCG@10 0.2032. A validation-only sweep
+found alpha was badly mis-set and that capacity mattered; the selected
+128-factor, alpha-5 candidate scored 0.2787 — a **+37.2% relative validation
+gain from hyperparameters**. The selected configuration then scored 0.2875 on
+an untouched confirmation sample and beat the previous CountSketch channel by
+75% there.
 
 That ordering is the lesson: the baseline was untuned long before it was
 under-powered. Reaching for a more complex model family before exhausting the

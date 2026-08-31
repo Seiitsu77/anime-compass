@@ -171,13 +171,29 @@ class ALSCollaborativeIndex:
             )
 
         # A pinned catalog digest is exact where the overlap ratio is fuzzy: it
-        # catches a catalog that drifted while still overlapping heavily.
-        if expected_catalog_ids_sha256:
+        # catches a catalog that drifted while still overlapping heavily. The
+        # production artifact carries the digest of the catalog it was trained
+        # against, so enforce it even when an operator did not duplicate the
+        # value in an environment variable. An external pin, when supplied,
+        # must also agree with the artifact metadata.
+        artifact_catalog_ids_sha256 = str(metadata.get("catalog_ids_sha256") or "")
+        if (
+            expected_catalog_ids_sha256
+            and artifact_catalog_ids_sha256
+            and artifact_catalog_ids_sha256 != expected_catalog_ids_sha256
+        ):
+            raise ALSCatalogMismatchError(
+                f"ALS artifact catalog pin mismatch for {path.name}: "
+                f"deployment expects {expected_catalog_ids_sha256[:16]}..., "
+                f"artifact declares {artifact_catalog_ids_sha256[:16]}..."
+            )
+        pinned_catalog_ids_sha256 = expected_catalog_ids_sha256 or artifact_catalog_ids_sha256
+        if pinned_catalog_ids_sha256:
             actual_catalog = catalog_ids_digest(sorted(catalog_ids))
-            if actual_catalog != expected_catalog_ids_sha256:
+            if actual_catalog != pinned_catalog_ids_sha256:
                 raise ALSCatalogMismatchError(
                     f"Catalog identity mismatch for {path.name}: "
-                    f"expected {expected_catalog_ids_sha256[:16]}..., got {actual_catalog[:16]}..."
+                    f"expected {pinned_catalog_ids_sha256[:16]}..., got {actual_catalog[:16]}..."
                 )
 
         metadata["artifact_sha256"] = sha256_file(path)

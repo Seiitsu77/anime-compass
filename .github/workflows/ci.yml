@@ -62,3 +62,5 @@ jobs:
               importlib.import_module(module)
               print('ok', module)
           "
+      - name: Exercise the public demo flow
+        run: python scripts/smoke_streamlit.py
