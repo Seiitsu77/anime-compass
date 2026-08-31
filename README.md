@@ -139,7 +139,7 @@ Each had a predeclared decision rule. Reporting them is the point: the architect
 
 ## Engineering
 
-- **364 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
+- **393 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
 - **Artifact integrity**: SHA-256 pinning, catalog-digest pinning, and role separation between the evaluation and
   production models. A catalog mismatch refuses startup rather than silently serving a stale model.
 - **NumPy-only serving.** No SciPy, no training code, and no ML framework in the web process.
@@ -170,11 +170,19 @@ python scripts/build_production_als.py
 python scripts/verify_production_als.py
 ```
 
-Then:
+Then build the compact serving catalog and start the demo:
+
+```bash
+python scripts/build_serving_catalog.py
+```
 
 ```bash
 streamlit run streamlit_app.py
 ```
+
+The serving catalog holds only the ten fields the demo reads, which is 6.6 MB
+instead of 119 MB for identical recommendations. It is optional locally — the demo
+falls back to the full catalog — but it is what a deployment should ship.
 
 The FastAPI service is unchanged and still runs with `python run_app.py`.
 
@@ -183,20 +191,35 @@ The FastAPI service is unchanged and still runs with `python run_app.py`.
 **Streamlit Community Cloud.** The demo imports the recommendation core directly rather than calling FastAPI over
 HTTP — both would run in the same process, so the extra hop would add a failure mode and nothing else.
 
+The deployment payload is two files, 14 MB in total:
+
+| File | Size | SHA-256 |
+|---|---:|---|
+| `als_production_item_factors.npz` | 7.4 MB | `95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10` |
+| `anime_catalog_serving.json` | 6.6 MB | `4b11cf3e5f3d015ed071232e569068248af709e7979e561194b451e3ac716bf3` |
+
+Both are gitignored and fetched at startup over https, then checksum-verified before use.
+
 1. Push this repository to GitHub.
-2. Upload `als_production_item_factors.npz` and `anime_catalog.json` somewhere with a stable https URL
-   (a Hugging Face Dataset repo works and is free).
+2. Upload both files to a stable https host (a Hugging Face Dataset repo works and is free).
 3. Create an app at [share.streamlit.io](https://share.streamlit.io) pointing at `streamlit_app.py`.
-4. Set these secrets so the app fetches and verifies the model:
+4. Set these secrets so the app fetches and verifies both:
 
 ```toml
 ALS_ARTIFACT_URL = "https://.../als_production_item_factors.npz"
 ALS_EXPECTED_SHA256 = "95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10"
 ALS_EXPECTED_CATALOG_IDS_SHA256 = "0ab8367a4c8a10a84d8c28cb358ef57f0428ff8df1f7f4ad83342fccdf6a1be5"
+SERVING_CATALOG_URL = "https://.../anime_catalog_serving.json"
+SERVING_CATALOG_EXPECTED_SHA256 = "4b11cf3e5f3d015ed071232e569068248af709e7979e561194b451e3ac716bf3"
 ```
 
-If the artifact cannot be fetched or fails verification, the demo shows a clear model-unavailable state. It never
+If either file cannot be fetched or fails verification, the demo shows a clear model-unavailable state. It never
 falls back to a weaker model while presenting itself as the benchmarked one.
+
+The compact catalog is a **deployment** artifact, not a model change: it preserves every MAL ID and so leaves the
+pinned catalog identity digest unchanged, and the equivalence is enforced by tests rather than asserted. The
+FastAPI service and the offline evaluation harness keep using the full catalog, which the constraint-rich Hybrid
+needs for entity joins.
 
 ## Project Structure
 
@@ -207,13 +230,14 @@ backend/anime_agent/
   fast_path.py                    default recommendation path
   retrieval.py  routing.py        candidate retrieval and source selection
   showcase.py                     headless service behind the demo
+  artifact_bootstrap.py           fetch and verify the deployment payload
   recommender.py                  multi-channel hybrid (constraint-rich path)
   evaluation/                     offline benchmark harness
 app/                              FastAPI service
-scripts/                          build, evaluate, verify, migrate
+scripts/                          build, evaluate, verify, migrate, compact
 docs/                             architecture, evaluation, portfolio summary
 data/evaluation/personalized/     experiment reports and decision records
-tests/                            364 tests
+tests/                            393 tests
 ```
 
 ## Data And License

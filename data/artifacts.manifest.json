@@ -12,6 +12,12 @@
       "size_bytes": 119371537,
       "required": true
     },
+    "anime_catalog_serving.json": {
+      "path": "data/processed/anime_catalog_serving.json",
+      "sha256": "4b11cf3e5f3d015ed071232e569068248af709e7979e561194b451e3ac716bf3",
+      "size_bytes": 6633570,
+      "required": false
+    },
     "collaborative_embeddings.npz": {
       "path": "data/processed/collaborative_embeddings.npz",
       "sha256": "4868cc4344096c834c0414d377773a975bb4e54e825b985da20299c1fafa4a3e",

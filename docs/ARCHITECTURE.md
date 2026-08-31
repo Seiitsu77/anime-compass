@@ -233,6 +233,39 @@ carrying `severity`, `error_type`, `action` (`refusing_startup` or
 `degraded_to_countsketch`), and which pins were set. Nothing trains or rebuilds
 at startup.
 
+### The serving catalog
+
+The demo and the FastAPI service read different catalogs, on purpose.
+
+| | Full catalog | Serving catalog |
+|---|---|---|
+| File | `anime_catalog.json` | `anime_catalog_serving.json` |
+| Size | 119.4 MB | 6.6 MB |
+| Fields | 43 | 10 |
+| Parse time | 1.40 s | 0.21 s |
+| Read by | FastAPI service, Hybrid, evaluation | Streamlit demo |
+
+Roughly 90 MB of the full catalog is character, voice-actor, staff, and producer
+data. That exists for the constraint-rich Hybrid, which resolves entities and
+performs exact catalog joins. The fast ALS path reads none of it, so shipping it
+to a demo container is pure cold-start cost.
+
+`scripts/build_serving_catalog.py` projects the catalog onto the ten fields the
+demo actually reads and refuses to write a file whose ID sequence, titles, or
+genres differ from the source. Two properties make the substitution safe:
+
+- **IDs are preserved exactly**, so `catalog_ids_digest` — computed over the
+  sorted ID set — is unchanged, and the pinned
+  `ALS_EXPECTED_CATALOG_IDS_SHA256` still validates.
+- **Synopses are pre-trimmed with the same idempotent function the renderer
+  uses**, so trimming at build time and trimming at render time produce
+  identical strings.
+
+Equivalence is enforced by tests, not asserted: identical recommendation IDs,
+display cards, search results, popularity ordering, and cold-start accounting
+across representative profiles. Measured on the real 18,064-item catalog, cold
+startup falls from 1.49 s to 0.38 s.
+
 ## Observability
 
 Every fast-path response carries a diagnostics block:
