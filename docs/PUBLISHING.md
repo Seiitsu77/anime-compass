@@ -35,8 +35,8 @@ files the demo needs:
 ```powershell
 python -m pip install -U huggingface_hub
 huggingface-cli login
-huggingface-cli upload YOUR_HF_USERNAME/anime-compass-data data/processed/als_production_item_factors.npz als_production_item_factors.npz --repo-type=dataset
-huggingface-cli upload YOUR_HF_USERNAME/anime-compass-data data/processed/anime_catalog_serving.json anime_catalog_serving.json --repo-type=dataset
+huggingface-cli upload Seiitsu/anime-compass-data data/processed/als_production_item_factors.npz als_production_item_factors.npz --repo-type=dataset
+huggingface-cli upload Seiitsu/anime-compass-data data/processed/anime_catalog_serving.json anime_catalog_serving.json --repo-type=dataset
 ```
 
 Their sizes and SHA-256 values are pinned in
@@ -45,8 +45,8 @@ rejects a file that does not match. Confirm both resolve URLs return 200 before
 deploying:
 
 ```text
-https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/als_production_item_factors.npz
-https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/anime_catalog_serving.json
+https://huggingface.co/datasets/Seiitsu/anime-compass-data/resolve/main/als_production_item_factors.npz
+https://huggingface.co/datasets/Seiitsu/anime-compass-data/resolve/main/anime_catalog_serving.json
 ```
 
 ## 3. Streamlit Community Cloud
@@ -60,8 +60,8 @@ https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main
    other secret is needed.
 
    ```toml
-   ALS_ARTIFACT_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/als_production_item_factors.npz"
-   SERVING_CATALOG_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/anime_catalog_serving.json"
+   ALS_ARTIFACT_URL = "https://huggingface.co/datasets/Seiitsu/anime-compass-data/resolve/main/als_production_item_factors.npz"
+   SERVING_CATALOG_URL = "https://huggingface.co/datasets/Seiitsu/anime-compass-data/resolve/main/anime_catalog_serving.json"
    ```
 5. Load an example profile, request recommendations, and open **Deployment
    health**. It should report `Production ALS`, a verified artifact, 18,064
@@ -78,7 +78,7 @@ needs — the 119 MB catalog and the optional evaluation files. Never upload `.e
 or an API key. The existing downloader validates every file against the manifest:
 
 ```powershell
-python scripts/download_artifacts.py --repo-id YOUR_HF_USERNAME/anime-compass-data
+python scripts/download_artifacts.py --repo-id Seiitsu/anime-compass-data
 ```
 
 A failed download or checksum leaves the model unavailable rather than silently

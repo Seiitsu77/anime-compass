@@ -161,10 +161,15 @@ python -m streamlit run streamlit_app.py
 `requirements.txt` is the demo's complete runtime, and it is what Streamlit Community Cloud installs
 automatically.
 
-The demo needs two artifacts that are too large for Git. Fetch them from the Hugging Face Dataset repo
-listed under [Deployment](#deployment) into `data/processed/`, or set `ALS_ARTIFACT_URL` and
-`SERVING_CATALOG_URL` and let the app download them on first run. Either way they are checksum-verified
-against `data/artifacts.manifest.json` before use. No API key is needed.
+The demo needs two artifacts that are too large for Git. Fetch them into `data/processed/`:
+
+```bash
+python scripts/download_artifacts.py --repo-id Seiitsu/anime-compass-data --artifact als_production_item_factors.npz --artifact anime_catalog_serving.json
+```
+
+Or set `ALS_ARTIFACT_URL` and `SERVING_CATALOG_URL` (see [Deployment](#deployment)) and let the app
+download them on first run. Either way they are checksum-verified against `data/artifacts.manifest.json`
+before use. No API key is needed.
 
 The serving catalog holds only the ten fields the demo reads, which is 6.6 MB
 instead of 119 MB for identical recommendations. The demo falls back to the full
@@ -207,14 +212,16 @@ before use. Only the two URLs go in Streamlit secrets: the expected checksums ar
 a changed catalog is rejected even when more than 90% of IDs still overlap.
 
 1. Push this repository to GitHub.
-2. Upload both files to a public Hugging Face Dataset repo (see [docs/PUBLISHING.md](docs/PUBLISHING.md)).
+2. Upload both files to a public Hugging Face Dataset repo — this project uses
+   [`Seiitsu/anime-compass-data`](https://huggingface.co/datasets/Seiitsu/anime-compass-data);
+   see [docs/PUBLISHING.md](docs/PUBLISHING.md).
 3. Create an app at [share.streamlit.io](https://share.streamlit.io) pointing at `streamlit_app.py`,
    on Python 3.12. Dependencies come from `requirements.txt` automatically.
-4. Set two secrets, replacing `YOUR_HF_USERNAME/anime-compass-data` with your Dataset repo:
+4. Set two secrets:
 
 ```toml
-ALS_ARTIFACT_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/als_production_item_factors.npz"
-SERVING_CATALOG_URL = "https://huggingface.co/datasets/YOUR_HF_USERNAME/anime-compass-data/resolve/main/anime_catalog_serving.json"
+ALS_ARTIFACT_URL = "https://huggingface.co/datasets/Seiitsu/anime-compass-data/resolve/main/als_production_item_factors.npz"
+SERVING_CATALOG_URL = "https://huggingface.co/datasets/Seiitsu/anime-compass-data/resolve/main/anime_catalog_serving.json"
 ```
 
 If either file cannot be fetched or fails verification, the demo shows a clear model-unavailable state. It never

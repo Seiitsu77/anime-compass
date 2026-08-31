@@ -314,7 +314,7 @@ and checksum-verified at startup. The much larger full catalog and optional rese
 from Git; download them from a Hugging Face Dataset repository when running the complete FastAPI application:
 
 ```powershell
-python scripts/download_artifacts.py --repo-id YOUR_HF_USERNAME/anime-compass-data
+python scripts/download_artifacts.py --repo-id Seiitsu/anime-compass-data
 ```
 
 Alternatively, place the CC0 Kaggle CSVs in the project and rebuild locally:
@@ -361,12 +361,12 @@ Tests mock Gemini and Ollama, so CI requires no provider key and makes no paid A
 
 ```powershell
 docker build -t anime-compass .
-docker run --rm -p 8000:7860 -e HF_DATASET_REPO=YOUR_HF_USERNAME/anime-compass-data anime-compass
+docker run --rm -p 8000:7860 -e HF_DATASET_REPO=Seiitsu/anime-compass-data anime-compass
 ```
 
 Or use `docker compose up --build`. The named volume stores only runtime SQLite data.
 
-For a Hugging Face Docker Space, set `HF_DATASET_REPO=YOUR_HF_USERNAME/anime-compass-data` as a Space variable. Missing artifacts are downloaded at startup and verified against `data/artifacts.manifest.json`. Add `LLM_PROVIDER=gemini` as a variable and `GEMINI_API_KEY` as a secret. Ollama remains the zero-cost local option but is not expected to run inside a small public Space.
+For a Hugging Face Docker Space, set `HF_DATASET_REPO=Seiitsu/anime-compass-data` as a Space variable. Missing artifacts are downloaded at startup and verified against `data/artifacts.manifest.json`. Add `LLM_PROVIDER=gemini` as a variable and `GEMINI_API_KEY` as a secret. Ollama remains the zero-cost local option but is not expected to run inside a small public Space.
 
 The complete account and repository checklist is in [PUBLISHING.md](PUBLISHING.md).
 
