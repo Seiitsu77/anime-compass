@@ -48,6 +48,8 @@ NDCG@10 of 0.2588 is a ranking-quality score against the full catalog, not an ac
 
 ## Demo
 
+https://anime-compass-xijwv9hjuqvoskonhrwtus.streamlit.app/
+
 The demo is a single Streamlit page:
 
 1. **Landing** — headline, three metrics, one-paragraph explanation.
