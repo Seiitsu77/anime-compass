@@ -8,8 +8,7 @@ including predeclared confirmation rules, and several promising ideas were measu
 
 ## Live Demo
 
-The repository is ready for Streamlit Community Cloud. Add the public URL here after connecting the GitHub repository
-as described in [Deployment](#deployment).
+https://anime-compass-xijwv9hjuqvoskonhrwtus.streamlit.app/
 
 No login, no account, no API key. Load an example profile, click Recommend, and inspect the model results and
 architecture from the same page.
@@ -47,8 +46,6 @@ Primary comparison, same 800 held-out users, same protocol:
 NDCG@10 of 0.2588 is a ranking-quality score against the full catalog, not an accuracy percentage.
 
 ## Demo
-
-https://anime-compass-xijwv9hjuqvoskonhrwtus.streamlit.app/
 
 The demo is a single Streamlit page:
 
