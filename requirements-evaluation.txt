@@ -3,3 +3,6 @@
 # use it for sparse matrix algebra.
 -r requirements-api.txt
 scipy>=1.11,<2
+# LambdaMART reranker training only. The serving path does not import it,
+# and promoting the reranker would be the decision that changes that.
+lightgbm>=4.5,<5
