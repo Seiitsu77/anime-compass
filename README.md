@@ -33,7 +33,7 @@ architecture from the same page.
 | Ratings scanned | **57,633,278** |
 | Positive interactions in the production model | **30,875,410** |
 | NDCG@10 vs the previous production architecture | **+42.6%** (paired 95% CI `[+0.0641, +0.0897]`) |
-| Recommendation latency | **~465× lower** (924.6 ms → 2.0 ms p50) |
+| Recommendation latency | **~465× lower** (924.6 ms → 2.0 ms benchmark p50) |
 | Evaluation protocol | Full ~18,000-item catalog, all held-out positives |
 
 Primary comparison, same 800 held-out users, same protocol:
@@ -42,6 +42,9 @@ Primary comparison, same 800 held-out users, same protocol:
 |---|---:|---:|---:|---:|---:|
 | Old Hybrid + CountSketch | 0.1815 | 0.1682 | 0.2000 | 0.2395 | 924.6 ms |
 | **Fast production ALS** | **0.2588** | **0.2480** | **0.2889** | **0.3572** | **2.0 ms** |
+
+Latency figures are offline benchmark percentiles on a dedicated machine. The hosted demo is slower: it runs
+on shared CPU and its reported timing includes application overhead.
 
 NDCG@10 of 0.2588 is a ranking-quality score against the full catalog, not an accuracy percentage.
 
@@ -129,10 +132,11 @@ Each had a predeclared decision rule. Reporting them is the point: the architect
 
 ## Engineering
 
-- **395 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
+- **449 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
 - **Artifact integrity**: SHA-256 pinning, catalog-digest pinning, and role separation between the evaluation and
   production models. A catalog mismatch refuses startup rather than silently serving a stale model.
-- **NumPy-only serving.** No SciPy, no training code, and no ML framework in the web process.
+- **NumPy-only serving on the default path.** No SciPy and no training code in the web process. The optional
+  learned reranker is the one exception and is off by default; enabling it adds LightGBM.
 - **Reproducibility**: dataset, split, catalog, and artifact hashes recorded for every published number.
 - Known limitation: the interaction snapshot ends in 2020, so this measures preference reconstruction rather
   than next-item prediction. There are no timestamps.
@@ -247,7 +251,7 @@ app/                              FastAPI service
 scripts/                          build, evaluate, verify, migrate, compact
 docs/                             architecture, evaluation, portfolio summary
 data/evaluation/personalized/     experiment reports and decision records
-tests/                            395 tests
+tests/                            449 tests
 ```
 
 ## Data And License

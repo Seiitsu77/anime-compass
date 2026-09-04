@@ -35,6 +35,18 @@
       "sha256": "95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10",
       "size_bytes": 7393985,
       "required": false
+    },
+    "reranker_features.npz": {
+      "path": "data/processed/reranker_features.npz",
+      "sha256": "83cb272bf3ba6e3b5d5185313ab73d952c783c443f8a2f65b4c3c02d2f8e0b82",
+      "size_bytes": 17357179,
+      "required": false
+    },
+    "reranker_lambdamart.txt": {
+      "path": "data/processed/reranker_lambdamart.txt",
+      "sha256": "78787f8a4c1a79c3fa3c28a2bfe3c52c474b73ea0b6d3a1b4f440930f5127dec",
+      "size_bytes": 554389,
+      "required": false
     }
   }
 }

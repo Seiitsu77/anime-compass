@@ -142,21 +142,8 @@ class RerankerFeatureSpace:
         quality_path: Path | None = None,
         item_item_path: Path | None = None,
     ) -> RerankerFeatureSpace:
-        by_id = {int(item["id"]): item for item in catalog}
         rows = len(anime_ids)
-        genres: list[frozenset[str]] = []
-        studios: list[frozenset[str]] = []
-        source: list[str] = []
-        media_type: list[str] = []
-        year = np.zeros(rows, dtype=np.float32)
-        for index, anime_id in enumerate(anime_ids.tolist()):
-            item = by_id.get(int(anime_id), {})
-            genres.append(frozenset(_tokens(item.get("genres"))))
-            studios.append(frozenset(_tokens(item.get("studios"))))
-            source.append(str(item.get("source") or "").casefold())
-            media_type.append(str(item.get("type") or "").casefold())
-            year[index] = float(item.get("start_year") or 0.0)
-        attributes = ItemAttributes(tuple(genres), tuple(studios), tuple(source), tuple(media_type), year)
+        attributes = cls._attributes(catalog, anime_ids)
 
         pop: npt.NDArray[np.float32] = np.zeros(rows, dtype=np.float32)
         if popularity_path and popularity_path.exists():
@@ -194,6 +181,55 @@ class RerankerFeatureSpace:
             neighbor_indices=neighbor_indices,
             neighbor_scores=neighbor_scores,
         )
+
+    @classmethod
+    def from_prepared(
+        cls,
+        catalog: Sequence[Mapping[str, Any]],
+        anime_ids: npt.NDArray[np.int64],
+        payload: Mapping[str, Any],
+    ) -> RerankerFeatureSpace:
+        """Build from one packed serving artifact rather than four training ones.
+
+        Offline evaluation reads the split's separate train-only artifacts;
+        production ships a single compacted file holding exactly the arrays
+        these features need. Both routes produce the same feature space, which
+        is what keeps training and serving free of skew.
+        """
+        attributes = cls._attributes(catalog, anime_ids)
+        metadata = json.loads(str(payload["metadata_json"].item()))
+        return cls(
+            anime_ids,
+            attributes,
+            train_positive_count=np.asarray(payload["positive_count"], dtype=np.float32),
+            train_rating_count=np.asarray(payload["rating_count"], dtype=np.float32),
+            train_rating_mean=np.asarray(payload["rating_mean"], dtype=np.float32),
+            train_bayes=np.asarray(payload["bayesian_score"], dtype=np.float32),
+            global_rating_mean=float(metadata.get("global_rating_mean", 0.0)),
+            neighbor_indices=np.asarray(payload["neighbor_indices"], dtype=np.int32),
+            neighbor_scores=np.asarray(payload["neighbor_scores"], dtype=np.float32),
+        )
+
+    @staticmethod
+    def _attributes(
+        catalog: Sequence[Mapping[str, Any]],
+        anime_ids: npt.NDArray[np.int64],
+    ) -> ItemAttributes:
+        by_id = {int(item["id"]): item for item in catalog}
+        rows = len(anime_ids)
+        genres: list[frozenset[str]] = []
+        studios: list[frozenset[str]] = []
+        source: list[str] = []
+        media_type: list[str] = []
+        year = np.zeros(rows, dtype=np.float32)
+        for index, anime_id in enumerate(anime_ids.tolist()):
+            item = by_id.get(int(anime_id), {})
+            genres.append(frozenset(_tokens(item.get("genres"))))
+            studios.append(frozenset(_tokens(item.get("studios"))))
+            source.append(str(item.get("source") or "").casefold())
+            media_type.append(str(item.get("type") or "").casefold())
+            year[index] = float(item.get("start_year") or 0.0)
+        return ItemAttributes(tuple(genres), tuple(studios), tuple(source), tuple(media_type), year)
 
     @staticmethod
     def _align(

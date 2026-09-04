@@ -178,7 +178,7 @@ async def test_fast_path_records_stage_latency(service):
     request = RecommendRequest(liked_ids=[1, 2], top_k=3)
     response = await service.recommend(request)
     stages = response["diagnostics"]["stage_latency_ms"]
-    assert set(stages) == {"routing", "retrieval", "filtering", "ranking", "reranking"}
+    assert set(stages) == {"routing", "retrieval", "filtering", "ranking", "learned_reranking", "reranking"}
     assert all(value >= 0 for value in stages.values())
 
 

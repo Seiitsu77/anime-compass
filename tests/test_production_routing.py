@@ -377,7 +377,14 @@ def test_trace_carries_every_observability_field():
         "total_latency_ms",
     ):
         assert key in trace, f"missing trace field: {key}"
-    assert set(trace["stage_latency_ms"]) == {"routing", "retrieval", "filtering", "ranking", "reranking"}
+    assert set(trace["stage_latency_ms"]) == {
+        "routing",
+        "retrieval",
+        "filtering",
+        "ranking",
+        "learned_reranking",
+        "reranking",
+    }
 
 
 def test_fast_path_config_is_validated():

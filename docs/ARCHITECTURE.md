@@ -233,6 +233,41 @@ carrying `severity`, `error_type`, `action` (`refusing_startup` or
 `degraded_to_countsketch`), and which pins were set. Nothing trains or rebuilds
 at startup.
 
+### The learned reranker
+
+A second stage sits between the ALS candidate set and the final top-N. It is
+**off by default**; the fast path serves the ALS order whenever it is absent,
+unverified, or throws.
+
+```text
+profile -> ALS top-300 -> hard filters and exclusions -> learned reranker
+        -> final exclusion re-check -> top-N
+```
+
+The reranker reorders and does nothing else. Filtering runs before it, so it
+only ever sees candidates that already cleared every hard constraint, and the
+exclusion re-check still runs afterwards.
+
+| | Value |
+|---|---|
+| Model | LightGBM LambdaMART, 157 trees, 18 features |
+| Gain over ALS | NDCG@10 +0.0372, 95% CI `[+0.0276, +0.0465]` |
+| Gain over the linear alternative | NDCG@10 +0.0103, 95% CI `[+0.0027, +0.0177]` |
+| Feature artifact | 17.36 MB (item-item neighbours dominate) |
+| Model artifact | 541 KB |
+| Added latency | +4.7 ms at three liked titles, +14.6 ms at eighty-six |
+| Added dependency | lightgbm, imported lazily |
+
+Almost all of that latency is feature construction, which the linear
+alternative pays identically; inference is 0.30 ms against 0.03 ms. That is why
+the simpler model was not chosen as a tie-breaker — it would not have avoided
+the expensive part. Full reasoning in
+`data/evaluation/personalized/results/reranker/reranker_selection.md`.
+
+Serving uses `raw_profile_scores`, not the normalised `profile_scores`: the
+model was fitted on raw ALS scores and its trees split on absolute thresholds,
+so a rescaled input would be silently wrong rather than loudly broken.
+
 ### The serving catalog
 
 The demo and the FastAPI service read different catalogs, on purpose.

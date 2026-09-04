@@ -1,20 +1,8 @@
-* text=auto
-
-*.py text eol=lf
-*.js text eol=lf
-*.css text eol=lf
-*.html text eol=lf
-*.md text eol=lf
-*.json text eol=lf
-*.csv text eol=lf
-*.yaml text eol=lf
-*.yml text eol=lf
-*.ps1 text eol=crlf
-
+# Model artifacts are parsed byte-for-byte. Git's CRLF normalisation silently
+# corrupted a committed LightGBM booster once; these keep LF endings so a
+# checkout on any platform still loads.
+*.txt text eol=lf
+data/evaluation/personalized/results/**/*.txt -text
 *.npz binary
-*.csv.gz binary
+*.gz binary
 *.sqlite binary
-*.png binary
-*.jpg binary
-*.jpeg binary
-*.gif binary

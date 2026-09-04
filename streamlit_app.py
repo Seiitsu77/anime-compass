@@ -124,7 +124,7 @@ def hero() -> None:
     left, middle, right = st.columns(3)
     for column, value, label in (
         (left, "+42.6%", "NDCG@10 vs the previous production architecture"),
-        (middle, "~2 ms", "Fast-path recommendation latency (p50)"),
+        (middle, "~2 ms", "Fast-path recommendation latency, benchmark p50"),
         (right, "30.9M", "Positive interactions in the production model"),
     ):
         with column:
@@ -135,6 +135,11 @@ def hero() -> None:
         "Pick a few titles you like. The system builds a preference profile with a tuned "
         "implicit-feedback ALS model and ranks the full ~18,000-title catalog against it. "
         "The full FastAPI application also routes explicit catalog constraints to a richer pipeline."
+    )
+    st.caption(
+        "The 2 ms figure is the offline benchmark p50 on a dedicated machine. The timing shown "
+        "with your results below is what this hosted page actually took, which is slower: "
+        "Streamlit Community Cloud runs on shared CPU and that number includes application overhead."
     )
 
 

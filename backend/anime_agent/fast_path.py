@@ -20,10 +20,13 @@ observable in production rather than only in an offline report.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+import numpy as np
 
 from .retrieval import (
     Candidate,
@@ -32,6 +35,8 @@ from .retrieval import (
     retrieve_candidates,
 )
 from .routing import CollaborativeRoute, RoutingDecision, RoutingPolicy, choose_collaborative_route
+
+logger = logging.getLogger("anime_compass.fast_path")
 
 # Diversity is disabled by default. ALS costs 2.97% intra-list diversity against
 # a 73% relevance gain (4.5 NDCG points per ILD point), which does not justify
@@ -52,6 +57,10 @@ class FastPathConfig:
     # A cheap Bayesian quality prior, blended after retrieval. Kept small: it is
     # already computed for every catalog row, so it costs nothing to consult.
     quality_weight: float = 0.10
+    # A learned second-stage reranker over the ALS candidate set. None keeps the
+    # ALS order, which is what the path did before reranking existed and what it
+    # falls back to whenever the artifact cannot be loaded.
+    reranker: Any | None = None
     version: str = "fastpath-v1"
 
     def __post_init__(self) -> None:
@@ -105,6 +114,7 @@ def recommend_fast(
     fallback_source: CandidateSource | None,
     tail_source: CandidateSource | None = None,
     quality_lookup: Any | None = None,
+    profile_rows: Sequence[int] | None = None,
     excluded_ids: Sequence[int] = (),
     allowed_ids: set[int] | None = None,
     limit: int = 10,
@@ -179,6 +189,20 @@ def recommend_fast(
     scored.sort(key=lambda pair: (-pair[0], pair[1].anime_id))
     stage_ms["ranking"] = (time.perf_counter() - rank_started) * 1000.0
 
+    # Second stage. It reorders the candidates the retriever already chose and
+    # the filters already cleared; it cannot introduce an item or rescue an
+    # excluded one, so every hard constraint above still holds afterwards.
+    rerank_started = time.perf_counter()
+    reranked_by_model = False
+    if config.reranker is not None and scored and profile_rows:
+        candidate_ids = [candidate.anime_id for _score, candidate in scored]
+        ordered = _apply_learned_reranker(config.reranker, als_source, list(profile_rows), candidate_ids)
+        if ordered is not None:
+            position = {anime_id: index for index, anime_id in enumerate(ordered)}
+            scored.sort(key=lambda pair: position.get(pair[1].anime_id, len(position)))
+            reranked_by_model = True
+    stage_ms["learned_reranking"] = (time.perf_counter() - rerank_started) * 1000.0
+
     rerank_started = time.perf_counter()
     reranked = _apply_diversity(scored, catalog_by_id, limit, config)
     stage_ms["reranking"] = (time.perf_counter() - rerank_started) * 1000.0
@@ -195,6 +219,7 @@ def recommend_fast(
         "candidate_pool_size": len(candidates),
         "candidates_after_filters": len(filtered),
         "returned": len(results),
+        "learned_reranker_applied": reranked_by_model,
         "diversity_applied": config.diversity_strength > 0.0,
         "diversity_strength": config.diversity_strength,
         "diversity_window": config.diversity_window if config.diversity_strength > 0.0 else 0,
@@ -215,6 +240,50 @@ def recommend_fast(
         routing=routing,
         diagnostics=diagnostics,
     )
+
+
+def _apply_learned_reranker(
+    reranker: Any,
+    als_source: Any,
+    profile_ids: Sequence[int],
+    candidate_ids: Sequence[int],
+) -> list[int] | None:
+    """Ask the reranker for a new order, or None to keep the ALS one.
+
+    Any failure here returns None rather than raising. The reranker is an
+    improvement layered on a path that already worked; a bad artifact, a shape
+    mismatch, or a LightGBM error must cost the gain, not the request.
+    """
+    index_by_id = getattr(reranker, "index_by_id", None)
+    if not index_by_id:
+        return None
+    rows = [index_by_id[anime_id] for anime_id in candidate_ids if anime_id in index_by_id]
+    if len(rows) != len(candidate_ids):
+        # A candidate the reranker has never seen would get an arbitrary score.
+        return None
+    known_profile = [index_by_id[anime_id] for anime_id in profile_ids if anime_id in index_by_id]
+    if not known_profile:
+        return None
+    raw_scores = getattr(als_source, "raw_profile_scores", None)
+    if raw_scores is None:
+        return None
+    try:
+        # The reranker was fitted on raw ALS scores, so it must be served raw
+        # ones. Anything rescaled would leave als_score_z intact and silently
+        # shift als_score onto thresholds the trees never learned.
+        all_scores = raw_scores(list(profile_ids))
+        if all_scores is None:
+            return None
+        candidate_scores = np.asarray([all_scores[row] for row in rows], dtype=np.float32)
+        ordered_rows = reranker.rerank(known_profile, rows, candidate_scores)
+    except Exception:  # noqa: BLE001 - degrade to the ALS order, never fail the request
+        logger.warning(
+            "reranker_failed",
+            extra={"context": {"action": "serving_als_order"}},
+        )
+        return None
+    id_by_row = {index_by_id[anime_id]: anime_id for anime_id in candidate_ids}
+    return [id_by_row[row] for row in ordered_rows if row in id_by_row]
 
 
 def _apply_diversity(

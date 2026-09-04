@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 ALS_ARTIFACT_VERSION = 1
 
@@ -254,6 +255,19 @@ class ALSCollaborativeIndex:
             for anime_id, score in zip(self.anime_ids.tolist(), scores.tolist(), strict=True)
             if score > 0.0
         }
+
+    def raw_profile_scores(self, positive_ids: Sequence[int]) -> npt.NDArray[np.float32] | None:
+        """Unnormalised item scores, in artifact row order.
+
+        `profile_scores` clamps at zero and divides by the peak, which is fine
+        for blending but wrong as a model input: the reranker was fitted on raw
+        scores, and its trees split on absolute thresholds. Rescaling would
+        leave the standardised feature intact and quietly move the raw one.
+        """
+        vector = self.user_vector(positive_ids)
+        if vector is None:
+            return None
+        return np.asarray(self.item_factors @ vector, dtype=np.float32)
 
     def top_candidates(self, positive_ids: Sequence[int], limit: int, *, excluded_ids: Sequence[int] = ()) -> list[int]:
         """Return the highest-scoring `limit` items, excluding known ones.
