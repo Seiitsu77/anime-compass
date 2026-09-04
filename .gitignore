@@ -41,6 +41,8 @@ archive/html folder/
 # repository. Keep only their checksummed manifest in GitHub source control.
 data/processed/*.json
 data/processed/*.npz
+# Serving models live with the other hosted artifacts, not in Git.
+data/processed/*.txt
 
 # Personalized benchmark splits and train-only model artifacts are reproducible
 # but too large for source control. Reports under results/ stay reviewable.
