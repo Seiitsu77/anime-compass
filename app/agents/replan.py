@@ -26,6 +26,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents.runtime_state import ReplanState, ToolResultSummary
 from app.agents.schemas import AgentIntent
 
 # Intents whose value depends on returning candidates. `details`,
@@ -129,6 +130,52 @@ def candidate_relaxations(intent: AgentIntent) -> list[str]:
         if transform(intent) is not None:
             available.append(field)
     return available
+
+
+@dataclass(frozen=True)
+class ReplanOutcome:
+    """Everything a replan produced, including its explicit end state."""
+
+    intent: AgentIntent
+    response: dict[str, Any]
+    steps: list[RelaxationStep]
+    state: ReplanState
+
+
+def replan_with_state(
+    intent: AgentIntent,
+    execute: Callable[[AgentIntent, frozenset[str]], dict[str, Any]],
+    *,
+    max_steps: int = 2,
+    initial_response: dict[str, Any] | None = None,
+) -> ReplanOutcome:
+    """`replan_until_results`, plus the runtime state it passed through.
+
+    The state is not a log. `ReplanState.after_relaxing` re-derives the required
+    constraints from the relaxed intent and refuses to advance if they changed,
+    so the "required constraints survive replanning" invariant is enforced on
+    every step rather than assumed from the shape of the ladder.
+    """
+    final_intent, response, steps = replan_until_results(
+        intent,
+        execute,
+        max_steps=max_steps,
+        initial_response=initial_response,
+    )
+    state = ReplanState.initial(intent, max_replans=max_steps)
+    running = intent
+    for step in steps:
+        outcome = next(
+            (transform(running) for field, _d, transform in RELAXATION_LADDER if field == step.field),
+            None,
+        )
+        running = outcome[0] if outcome else running
+        state = state.after_relaxing(
+            step.field,
+            running,
+            summary=ToolResultSummary(result_count=step.result_count),
+        )
+    return ReplanOutcome(final_intent, response, steps, state)
 
 
 def replan_until_results(

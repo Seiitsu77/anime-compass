@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import httpx
@@ -9,6 +8,8 @@ from pydantic import ValidationError
 from app.core.errors import ProviderUnavailable
 
 from .gemini_provider import GeminiAgentProvider
+from .prompting import RESPONSE_TASK_POLICY, SYSTEM_POLICY, render_evidence_turn
+from .runtime_state import tool_observation_from_verified
 from .schemas import AgentIntent, ProviderHealth, ProviderParseContext
 
 
@@ -41,21 +42,17 @@ class OllamaAgentProvider:
             raise ProviderUnavailable(self.name, "Ollama returned invalid structured intent") from exc
 
     async def generate_tool_response(self, user_message: str, verified_tool_data: dict[str, Any]) -> str:
+        """Same policy as every other provider, sent as the system turn.
+
+        This provider used to carry its own shortened copy of the grounding
+        rules, which had already drifted from Gemini's. Both now render from
+        SYSTEM_POLICY, so a policy change reaches every provider at once.
+        """
+        observation = tool_observation_from_verified(verified_tool_data)
         return await self._chat(
             [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are Anime Compass. Use only the verified catalog JSON. List exactly the "
-                        "verified result titles in the supplied order and explain them with user-facing catalog evidence. "
-                        "Never invent facts or titles. Do not mention JSON, tools, embeddings, TF-IDF, "
-                        "ranking channels, or hybrid scores."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"{user_message}\n\nVerified JSON:\n{json.dumps(verified_tool_data, ensure_ascii=False)[:18_000]}",
-                },
+                {"role": "system", "content": SYSTEM_POLICY + "\n\n" + RESPONSE_TASK_POLICY},
+                {"role": "user", "content": render_evidence_turn(user_message, observation)},
             ]
         )
 

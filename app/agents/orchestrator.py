@@ -14,7 +14,8 @@ from backend.anime_agent.ollama_client import OllamaUnavailable
 from backend.anime_agent.recommender import AnimeRecommender
 
 from .base import AgentProvider
-from .replan import RETRIEVAL_INTENTS, replan_until_results, result_count
+from .replan import RETRIEVAL_INTENTS, replan_with_state, result_count
+from .runtime_state import ReplanState, build_runtime_context
 from .schemas import AgentIntent, ProviderParseContext
 from .tools import CatalogToolRegistry, ToolContractError, ValidatedToolCall
 
@@ -145,6 +146,7 @@ class AgentOrchestrator:
             provider_attempts=provider_attempts,
             parser_errors=parser_errors,
         )
+        replan_state = response.pop("_replan_state", None) or ReplanState()
         if provider_attempts and provider_attempts[-1].get("phase") == "tool_routing_fallback":
             parser_mode = "rule_fallback"
         generation_ms = 0.0
@@ -162,12 +164,23 @@ class AgentOrchestrator:
                     if name != selected_provider.name and name not in failed_providers
                 ],
             ]
+            runtime_context = build_runtime_context(
+                catalog_genres=context.genres,
+                catalog_formats=context.formats,
+                session=session,
+                intent=agent_intent,
+                selected_route=str(response.get("mode") or "") or None,
+                candidate_count=len(response.get("trace", []) or []) or None,
+                replan=replan_state,
+            )
             verified_data = {
                 "mode": response.get("mode"),
                 "validated_intent": agent_intent.model_dump(mode="json"),
                 "validated_tool_calls": [call.model_dump(mode="json") for call in validated_calls],
                 "verified_tool_trace": response.get("trace", []),
+                "relaxations": response.get("relaxations", []),
                 "deterministic_fallback": response.get("answer", ""),
+                "runtime_context": runtime_context.as_prompt_payload(),
             }
             for provider_name in generation_order:
                 provider = self.providers.get(provider_name)
@@ -242,6 +255,7 @@ class AgentOrchestrator:
                     for name, state in self.circuits.items()
                 },
                 "validated_intent": agent_intent.model_dump(mode="json"),
+                "replan_state": replan_state.model_dump(mode="json"),
                 "tool_plan": self.tool_registry.plan(agent_intent).model_dump(mode="json"),
                 "tool_calls": [call.tool for call in validated_calls],
                 "timing_ms": {
@@ -312,18 +326,21 @@ class AgentOrchestrator:
             )
 
         relaxations: list[dict[str, Any]] = []
+        replan_state = ReplanState.initial(validated_intent, max_replans=self.settings.max_replan_steps)
         if (
             self.settings.max_replan_steps > 0
             and validated_intent.intent in RETRIEVAL_INTENTS
             and result_count(response) == 0
         ):
-            replanned_intent, replanned_response, steps = await asyncio.to_thread(
-                replan_until_results,
+            outcome = await asyncio.to_thread(
+                replan_with_state,
                 validated_intent,
                 execute,
                 max_steps=self.settings.max_replan_steps,
                 initial_response=response,
             )
+            replanned_intent, replanned_response, steps = outcome.intent, outcome.response, outcome.steps
+            replan_state = outcome.state
             if steps:
                 relaxations = [step.as_dict() for step in steps]
                 # Only adopt a relaxed plan that actually recovered candidates.
@@ -341,6 +358,7 @@ class AgentOrchestrator:
                 )
         if relaxations:
             response["relaxations"] = relaxations
+        response["_replan_state"] = replan_state
         try:
             calls = self.tool_registry.validate_trace(
                 validated_intent,

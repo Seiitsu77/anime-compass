@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from .agent_policy import SYSTEM_POLICY
 from .entities import EntityResolver
 from .intent import (
     EntityMention,
@@ -18,12 +19,12 @@ from .intent import (
 from .ollama_client import ChatClient, OllamaClient, OllamaUnavailable
 from .recommender import AnimeRecommender, series_key, tokenize
 
-SYSTEM_PROMPT = """You are Anime Compass, a friendly and proactive local anime guide.
-
-You have access to trusted anime catalog tools. Always use them for catalog facts,
-recommendations, introductions, characters, staff, and voice actors. Never invent a
-title, score, genre, studio, person, or story detail.
-
+# The behavioural half comes from the one shared policy, so this path cannot
+# drift away from the orchestrated one. Only the legacy tool-call syntax, which
+# is specific to this client protocol, is local.
+SYSTEM_PROMPT = (
+    SYSTEM_POLICY
+    + """
 When you need a tool, respond with only one JSON object:
 {"tool":"search_anime","arguments":{"query":"title or keywords","limit":5}}
 {"tool":"rank_catalog","arguments":{"query":"Gundam","formats":["TV"],"sort_by":"score","sort_order":"desc","top_k":5}}
@@ -31,16 +32,11 @@ When you need a tool, respond with only one JSON object:
 {"tool":"get_anime_details","arguments":{"anime_id":123}}
 {"tool":"update_session_preferences","arguments":{"liked_titles":["Title"],"excluded_genres":["Mecha"]}}
 
-Response style:
-- Lead with the answer instead of a generic greeting.
-- Sound warm, natural, and confident, but never overexcited or overly wordy.
-- Explain why a recommendation fits the user's request using catalog evidence.
-- For an introduction, give a spoiler-light premise, tone and themes, practical details,
-  and notable cast or staff only when those fields are present in the tool result.
-- End with one concrete next step when useful, such as offering similar titles, cast
-  details, or a deeper spoiler-free explanation.
-- Keep lists short unless the user asks for more.
+For an introduction, give a spoiler-light premise, tone and themes, practical details,
+and notable cast or staff only when those fields are present in the tool result.
+Keep lists short unless the user asks for more.
 """
+)
 
 INTRODUCTION_PATTERNS = (
     "introduce ",
