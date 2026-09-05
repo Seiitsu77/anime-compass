@@ -17,7 +17,7 @@ from .intent import (
     parse_structured_intent,
 )
 from .ollama_client import ChatClient, OllamaClient, OllamaUnavailable
-from .recommender import AnimeRecommender, series_key, tokenize
+from .recommender import AnimeRecommender, normalize_label, series_key, tokenize
 
 # The behavioural half comes from the one shared policy, so this path cannot
 # drift away from the orchestrated one. Only the legacy tool-call syntax, which
@@ -479,9 +479,24 @@ class AnimeAgent:
         )
 
     def _named_catalog_entities(self, message: str, entity_type: str) -> list[str]:
+        """Catalog entities of `entity_type` named literally in the message.
+
+        This is the boundary where raw text becomes a structured entity, so it
+        applies the same validity rule the validated intent does: a name whose
+        normalised label is empty is a stopword and cannot identify anything.
+
+        Without that check, the catalog's junk character record "With" matched
+        the preposition in "something with dark psychological mind games" --
+        `_entity_name_key` normalises punctuation but keeps stopwords, so the
+        variant survived. Validation had already removed that entity from the
+        intent; recovery put it straight back, and the required-character
+        filter then emptied the result set.
+        """
         message_key = self._entity_name_key(message)
         matches: list[str] = []
         for record in self.entity_resolver.by_type.get(entity_type, []):
+            if not normalize_label(record.name):
+                continue
             variants = [variant for variant in record.variants if len(variant) >= 4]
             if any(re.search(rf"(?:^|\s){re.escape(variant)}(?:$|\s)", message_key) for variant in variants):
                 matches.append(record.name)
@@ -1624,6 +1639,21 @@ class AnimeAgent:
             )
 
     def _recover_explicit_entity_mentions(self, intent: StructuredIntent, message: str) -> None:
+        """Recover entity mentions the parser missed, from the raw message.
+
+        This exists for the rule-based fallback, which has no structured parse
+        to work from. It must not run against a validated intent: it matches
+        catalog entity names against every word of the message, and the catalog
+        contains a character literally named "With", so the sentence "something
+        with dark psychological mind games" reintroduced a required character
+        that validation had already removed -- emptying the result set.
+
+        Recovery is allowed to *add* an entity the parser missed -- that is what
+        it exists for, and it is how "by director Ken Sato" survives a parser
+        that labelled Ken Sato a character. What it must not do is reintroduce
+        something validation *rejected*, which is why every candidate name now
+        passes the same nameability rule the validated intent applies.
+        """
         existing = {
             (mention.entity_type, self._entity_name_key(mention.text), mention.relation)
             for mention in intent.entity_mentions
@@ -1776,6 +1806,12 @@ class AnimeAgent:
         }
 
     def _enforce_explicit_voice_actor_constraint(self, intent: StructuredIntent, message: str) -> None:
+        """Promote voice actors to required constraints.
+
+        Names extracted from the raw message pass through
+        `_named_catalog_entities`, which rejects anything that cannot name an
+        entity, so this cannot reintroduce a value validation rejected.
+        """
         extracted = self._extract_required_voice_actors(message)
         if self._requires_voice_actor_membership(message):
             extracted.extend(
