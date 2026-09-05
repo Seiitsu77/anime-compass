@@ -71,11 +71,16 @@ class AnimeRecommendation(BaseModel):
     matched_voice_actors: list[str] = Field(default_factory=list)
     voice_actor_roles: list[VoiceActorRole] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
-    recommendation_mode: str
-    score_breakdown: HybridScoreBreakdown
-    pre_diversity_score: float
-    diversity_adjustment: float
-    final_score: float
+    # Hybrid scoring internals. Optional because the fast ALS + LambdaMART path
+    # genuinely has none of them -- there is no per-channel blend and no
+    # diversity adjustment to report. Requiring them made every fast-path
+    # response fail validation the moment a real ALS artifact was present,
+    # which the test suite hid by disabling ALS in its fixtures.
+    recommendation_mode: str = "fast"
+    score_breakdown: HybridScoreBreakdown | None = None
+    pre_diversity_score: float | None = None
+    diversity_adjustment: float | None = None
+    final_score: float | None = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -282,6 +287,7 @@ class HealthResponse(ApiModel):
     status: Literal["healthy", "degraded", "unhealthy"]
     components: dict[str, ComponentHealth]
     catalog: dict[str, Any]
+    ranking: dict[str, Any] = Field(default_factory=dict)
     agent: dict[str, Any]
 
 

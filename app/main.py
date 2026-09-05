@@ -36,6 +36,7 @@ from backend.anime_agent.data_pipeline import load_or_create_catalog
 from backend.anime_agent.entities import EntityResolver
 from backend.anime_agent.fast_path import FastPathConfig
 from backend.anime_agent.recommender import AnimeRecommender
+from backend.anime_agent.reranker_serving import try_load_reranker
 from backend.anime_agent.retrieval import RetrievalConfig
 from backend.anime_agent.routing import RoutingPolicy
 from scripts.download_artifacts import ensure_artifacts
@@ -106,6 +107,7 @@ def create_app(
         # the only cheap source with tail exposure, and the degradation path if
         # the ALS artifact is missing or fails validation.
         loaded_als = _load_als_index(settings, loaded_catalog, quality_source=loaded_collaborative)
+        loaded_reranker = _load_reranker(settings, loaded_catalog, loaded_als)
         recommender = AnimeRecommender(
             loaded_catalog,
             semantic_index=loaded_semantic,
@@ -126,6 +128,7 @@ def create_app(
                 als_index=loaded_als,
                 fallback_index=loaded_collaborative,
                 fast_path_config=FastPathConfig(
+                    reranker=loaded_reranker,
                     retrieval=RetrievalConfig(
                         als_top_n=settings.retrieval_als_top_n,
                         item_item_top_m=settings.retrieval_item_item_top_m,
@@ -321,6 +324,38 @@ def _load_semantic_index(
             extra={"context": {"error_type": type(exc).__name__}},
         )
         return None
+
+
+def _load_reranker(
+    settings: Settings,
+    catalog: list[dict[str, Any]],
+    als_index: ALSCollaborativeIndex | None,
+) -> Any | None:
+    """Load the promoted LambdaMART reranker, or None to serve the ALS order.
+
+    Never raises. The reranker improves an ordering the fast path already
+    produces correctly, so a missing or invalid artifact costs the improvement
+    and nothing else. `/health` reports which of the two is actually serving,
+    so a degraded deployment is visible rather than silently claimed.
+    """
+    if not settings.reranker_enabled or als_index is None:
+        return None
+    reranker = try_load_reranker(
+        settings.reranker_feature_path,
+        settings.reranker_model_path,
+        catalog,
+        als_index.anime_ids,
+        expected_feature_sha256=settings.reranker_feature_sha256 or None,
+        expected_model_sha256=settings.reranker_model_sha256 or None,
+    )
+    if reranker is None:
+        logger.warning(
+            "reranker_unavailable",
+            extra={"context": {"action": "serving_als_order", "enabled": settings.reranker_enabled}},
+        )
+    else:
+        logger.info("reranker_loaded", extra={"context": reranker.model_info()})
+    return reranker
 
 
 def _load_als_index(

@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +64,8 @@ class ModelHealth:
     cold_start_items: int
     load_seconds: float
     error: str | None = None
+    reranker_available: bool = False
+    reranker_detail: str = "not configured"
 
     @property
     def serving_production_als(self) -> bool:
@@ -71,11 +73,17 @@ class ModelHealth:
 
     @property
     def headline(self) -> str:
+        """What is actually serving, never what was hoped for."""
+        if not self.als_available:
+            return "Unavailable"
+        stage = "ALS" if self.serving_production_als else f"ALS ({self.artifact_role or 'unknown role'})"
         if self.serving_production_als:
-            return "Production ALS"
-        if self.als_available:
-            return f"ALS ({self.artifact_role or 'unknown role'})"
-        return "Unavailable"
+            stage = "Production ALS"
+        return f"{stage} + LambdaMART" if self.reranker_available else stage
+
+    @property
+    def reranker_headline(self) -> str:
+        return "LambdaMART active" if self.reranker_available else "degraded to ALS"
 
 
 @dataclass
@@ -225,6 +233,7 @@ class ShowcaseService:
             als_source=self.als_index,
             fallback_source=None,
             quality_lookup=self.als_index,
+            profile_rows=liked,
             excluded_ids=excluded,
             limit=fetch,
             config=self.config,
@@ -376,6 +385,8 @@ def load_showcase_service(
     expected_catalog_ids_sha256: str | None = None,
     require_production: bool = True,
     config: FastPathConfig | None = None,
+    reranker_feature_path: Path | None = None,
+    reranker_model_path: Path | None = None,
 ) -> ShowcaseService:
     """Load the model and build the service, recording what actually happened.
 
@@ -401,6 +412,28 @@ def load_showcase_service(
         error = f"{type(exc).__name__}: {exc}"
     load_seconds = time.perf_counter() - started
 
+    # The promoted second stage. It is loaded only if ALS itself loaded, and a
+    # failure here costs the improvement rather than the recommendations.
+    reranker = None
+    reranker_detail = "not configured"
+    if index is not None and reranker_feature_path and reranker_model_path:
+        from .reranker_serving import try_load_reranker
+
+        reranker = try_load_reranker(
+            reranker_feature_path,
+            reranker_model_path,
+            catalog,
+            index.anime_ids,
+        )
+        reranker_detail = (
+            f"LambdaMART, {reranker.model_info()['trees']} trees"
+            if reranker is not None
+            else "artifact missing or invalid; serving ALS order"
+        )
+    if reranker is not None:
+        config = config or FastPathConfig()
+        config = replace(config, reranker=reranker)
+
     catalog_ids = {int(item["id"]) for item in catalog}
     covered = len(catalog_ids & set(index.anime_ids.tolist())) if index is not None else 0
     info = index.model_info() if index is not None else {}
@@ -413,6 +446,8 @@ def load_showcase_service(
         cold_start_items=len(catalog_ids) - covered,
         load_seconds=load_seconds,
         error=error,
+        reranker_available=reranker is not None,
+        reranker_detail=reranker_detail,
     )
     return ShowcaseService(catalog, index, health=health, config=config)
 

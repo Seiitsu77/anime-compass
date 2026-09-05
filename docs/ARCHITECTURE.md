@@ -236,8 +236,10 @@ at startup.
 ### The learned reranker
 
 A second stage sits between the ALS candidate set and the final top-N. It is
-**off by default**; the fast path serves the ALS order whenever it is absent,
-unverified, or throws.
+**on by default** (`RERANKER_ENABLED=true`); the fast path serves the verified
+ALS order whenever it is absent, unverified, or throws, and `/api/health`
+reports which of the two is actually serving rather than claiming the better
+one.
 
 ```text
 profile -> ALS top-300 -> hard filters and exclusions -> learned reranker

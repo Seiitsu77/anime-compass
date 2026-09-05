@@ -455,7 +455,11 @@ async function refreshRecommendations() {
     method: "POST",
     body: JSON.stringify({
       session_id: state.sessionId,
-      reference_titles: state.liked.map((item) => item.title),
+      // The user's likes are a *profile*, not a similarity constraint. Sending
+      // them as reference_titles routed every personalized request to the
+      // constraint-rich Hybrid, so the ALS + LambdaMART fast path never ran for
+      // the main panel. liked_ids is what that path consumes.
+      liked_ids: state.liked.map((item) => Number(item.id)).filter(Number.isFinite),
       include_genres: Array.from(state.genres),
       formats: state.mediaType ? [state.mediaType] : [],
       min_score: state.minScore ? Number(state.minScore) : null,
@@ -463,6 +467,9 @@ async function refreshRecommendations() {
       excluded_titles: state.preferences.excluded_titles,
       seen_titles: state.preferences.seen_titles,
       session_profile: preferencePayload(),
+      // Liking one title should not return three entries from its franchise.
+      // "More like this" already asked for this; the main panel now does too.
+      one_per_series: true,
       limit: COMPACT_RESULT_LIMIT,
     }),
   });
@@ -561,6 +568,7 @@ function renderAnimeCard(item) {
           <h3 class="anime-title">${escapeHtml(item.title)}</h3>
           <div class="anime-meta">
             <span class="meta-pill">${escapeHtml(item.type || "Unknown")}</span>
+            ${item.start_year ? `<span class="meta-pill">${escapeHtml(String(item.start_year))}</span>` : ""}
             <span class="meta-pill">Score ${escapeHtml(formatScore(item.score))}</span>
             ${item.episodes ? `<span class="meta-pill">${item.episodes} eps</span>` : ""}
           </div>
@@ -581,14 +589,18 @@ function renderAnimeCard(item) {
             ${(explanation.matched_constraints || []).length ? `<p>Constraints: ${explanation.matched_constraints.map(escapeHtml).join(", ")}</p>` : ""}
           </div>
         </details>
-        <details class="score-breakdown">
-          <summary>Debug scores</summary>
-          <div class="why-content">
-            <p>Mode: ${escapeHtml(item.recommendation_mode || "unknown")}</p>
-            <p>Pre-diversity ${Number(item.pre_diversity_score || 0).toFixed(3)} + adjustment ${Number(item.diversity_adjustment || 0).toFixed(3)} = final ${Number(item.final_score || 0).toFixed(3)}</p>
-          </div>
+        ${
+          // Channel weights only exist on the constraint-rich Hybrid path. The
+          // fast ALS + LambdaMART path has no per-channel blend, and rendering
+          // it there produced a panel of zeroes. Learned ranking scores are
+          // deliberately not surfaced to readers either way.
+          scoreRows
+            ? `<details class="score-breakdown">
+          <summary>Ranking signals</summary>
           <div class="score-grid">${scoreRows}</div>
-        </details>
+        </details>`
+            : ""
+        }
         <div class="card-actions">
           <button class="secondary-button" type="button" data-detail-id="${item.id}">Details</button>
           <button class="icon-button" type="button" data-add-id="${item.id}" aria-label="Add ${escapeHtml(item.title)} to liked titles">+</button>

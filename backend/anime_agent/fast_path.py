@@ -24,7 +24,7 @@ import logging
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeGuard
 
 import numpy as np
 
@@ -142,12 +142,20 @@ def recommend_fast(
     )
     stage_ms["routing"] = (time.perf_counter() - started) * 1000.0
 
+    # Only sources that actually implement the retrieval protocol may be used.
+    # The CountSketch index predates it and has no `top_candidates`, so routing
+    # a cold-start profile to it raised AttributeError instead of returning
+    # nothing. An unusable source is dropped here; if that leaves no source at
+    # all, the caller falls through to the hybrid, which handles cold start.
+    def _usable(source: CandidateSource | None) -> TypeGuard[CandidateSource]:
+        return source is not None and callable(getattr(source, "top_candidates", None))
+
     sources: dict[str, CandidateSource] = {}
-    if routing.route is CollaborativeRoute.ALS and als_source is not None:
+    if routing.route is CollaborativeRoute.ALS and _usable(als_source):
         sources["als"] = als_source
-    elif fallback_source is not None:
+    elif _usable(fallback_source):
         sources["countsketch"] = fallback_source
-    if config.retrieval.include_tail_source and tail_source is not None:
+    if config.retrieval.include_tail_source and _usable(tail_source):
         sources["item_item"] = tail_source
 
     blocked = {int(value) for value in excluded_ids}

@@ -16,8 +16,9 @@ reproducible from this repository.
 Shorter variant if space is tight:
 
 > Personalized recommender over 57M ratings: +42.6% NDCG@10 and ~465× lower
-> latency by replacing a ten-channel hybrid with tuned implicit ALS, chosen
-> through controlled offline experiments with predeclared decision rules.
+> latency by replacing a ten-channel hybrid with tuned implicit ALS, then a
+> further +15.1% NDCG@10 from a LambdaMART reranker over the ALS candidate set,
+> each chosen on its own controlled benchmark with predeclared decision rules.
 
 ---
 
@@ -105,6 +106,25 @@ items — it has no tail reach on its own, which is why the item-item source is
 retained as an option. These are documented rather than papered over.
 
 ---
+
+## The reranker, briefly
+
+ALS retrieves well — Recall@300 is 0.7932 — so the open question was ordering,
+not retrieval. A LambdaMART reranker over the frozen ALS top-300 improved
+NDCG@10 from 0.2456 to 0.2828 on 800 users no earlier experiment had touched,
+paired 95% CI `[+0.0276, +0.0465]`.
+
+Two details make it worth telling. Over half the gain comes from item-item
+similarity features — a signal this project had already *rejected* as a
+candidate generator, where it cost 9% NDCG for tail reach. It is a poor
+retriever and a good tie-breaker, and those are not contradictory. And the
+choice of LambdaMART over a simpler linear model was not made on accuracy
+alone: both need the same 17 MB feature artifact and the same per-request
+feature construction, so the simpler model would have saved 5 MB of 23 and
+0.27 ms of 5.7 while concentrating the catalog 15% harder.
+
+Two percentages, two samples: **+42.6%** (Hybrid to ALS) and **+15.1%** (ALS to
+LambdaMART) come from different confirmation sets and are never combined.
 
 ## Talking points by role
 

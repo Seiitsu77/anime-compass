@@ -79,6 +79,19 @@ class Settings(BaseSettings):
     # A mismatch against an explicitly pinned ALS_EXPECTED_SHA256 always refuses,
     # because that is an integrity failure rather than a missing optional model.
     als_require_valid_artifact: bool = False
+    # Learned second-stage reranker over the ALS candidate set. Promoted after a
+    # paired confirmation on 800 untouched users: NDCG@10 0.2456 -> 0.2828.
+    # On by default; every failure path degrades to the verified ALS order,
+    # which is itself a validated model, so a reranker outage is a lost
+    # improvement rather than a broken recommender.
+    reranker_enabled: bool = True
+    reranker_feature_path: Path = PROJECT_ROOT / "data" / "processed" / "reranker_features.npz"
+    reranker_model_path: Path = PROJECT_ROOT / "data" / "processed" / "reranker_lambdamart.txt"
+    # Optional pins. When set, a mismatch refuses the reranker (and only the
+    # reranker) rather than serving a model against features it never saw.
+    reranker_feature_sha256: str = ""
+    reranker_model_sha256: str = ""
+
     # Known positives at which ALS becomes the primary source. The offline
     # activity-balanced diagnostic showed no demonstrated ALS gain below 5.
     routing_medium_threshold: int = 5
@@ -104,6 +117,8 @@ class Settings(BaseSettings):
         "semantic_artifact_path",
         "collaborative_artifact_path",
         "als_artifact_path",
+        "reranker_feature_path",
+        "reranker_model_path",
         "item_item_artifact_path",
         mode="before",
     )

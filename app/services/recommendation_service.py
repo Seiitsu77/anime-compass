@@ -13,7 +13,7 @@ from app.repositories.session_repository import SQLiteSessionRepository, merge_p
 from backend.anime_agent.als_serving import ALSCollaborativeIndex
 from backend.anime_agent.fast_path import FastPathConfig, recommend_fast
 from backend.anime_agent.path_policy import RecommendationPath, choose_recommendation_path
-from backend.anime_agent.recommender import AnimeRecommender
+from backend.anime_agent.recommender import AnimeRecommender, series_key
 
 logger = logging.getLogger("anime_compass.recommendation")
 
@@ -153,6 +153,29 @@ class RecommendationService:
     async def search_page(self, **query: Any) -> tuple[list[dict[str, Any]], int]:
         return await asyncio.to_thread(self.recommender.search_page, **query)
 
+    def _collapse_series(self, ranked: list[int], liked_ids: list[int]) -> list[int]:
+        """Keep the best-ranked entry per franchise, and drop the profile's own.
+
+        A display filter, not a ranking change: it reads the order the reranker
+        produced and removes near-duplicates from the same series.
+        """
+        seen: set[str] = set()
+        for liked in liked_ids:
+            item = self.recommender.by_id.get(int(liked))
+            if item is not None:
+                seen.add(series_key(str(item.get("title") or "")))
+        kept: list[int] = []
+        for anime_id in ranked:
+            item = self.recommender.by_id.get(int(anime_id))
+            if item is None:
+                continue
+            key = series_key(str(item.get("title") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(int(anime_id))
+        return kept
+
     def _recommend_fast(
         self,
         request: RecommendRequest,
@@ -171,6 +194,11 @@ class RecommendationService:
         excluded.extend(int(value) for value in session_profile.get("disliked_ids", []) or [])
         excluded.extend(int(value) for value in session_profile.get("watched_ids", []) or [])
 
+        # `one_per_series` is part of the request contract, and the fast path was
+        # silently ignoring it: liking Steins;Gate returned three Steins;Gate
+        # entries. Collapsing happens after ranking, on extra candidates, so the
+        # learned order is read rather than changed.
+        fetch = request.top_k * 4 if request.one_per_series else request.top_k
         result = recommend_fast(
             positives,
             catalog_by_id=self.recommender.by_id,
@@ -178,16 +206,21 @@ class RecommendationService:
             fallback_source=self.fallback_index,
             tail_source=self.tail_index,
             quality_lookup=self.als_index,
+            profile_rows=positives,
             excluded_ids=excluded,
-            limit=request.top_k,
+            limit=fetch,
             config=self.fast_path_config,
         )
-        if not result.anime_ids:
+        ranked_ids = result.anime_ids
+        if request.one_per_series:
+            ranked_ids = self._collapse_series(ranked_ids, positives)
+        ranked_ids = ranked_ids[: request.top_k]
+        if not ranked_ids:
             return None
 
         items = [
             self.recommender.public_item(self.recommender.by_id[anime_id])
-            for anime_id in result.anime_ids
+            for anime_id in ranked_ids
             if anime_id in self.recommender.by_id
         ]
         provenance = {candidate.anime_id: candidate.as_dict() for candidate in result.candidates}

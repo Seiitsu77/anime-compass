@@ -1,0 +1,7 @@
+# What the deployed website actually runs: the FastAPI service, the optional
+# semantic channel, and LightGBM for the promoted LambdaMART reranker.
+#
+# LightGBM is imported lazily, so an image built without it still serves -- the
+# fast path degrades to the verified ALS ordering and /api/health says so.
+-r requirements-embeddings.txt
+lightgbm>=4.5,<5

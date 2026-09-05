@@ -189,6 +189,12 @@ async def health(state: Container) -> dict[str, Any]:
     semantic_info = state.recommender.model_info()["semantic_embedding"]
     collaborative_available = state.recommender.collaborative_index is not None
     collaborative_info = state.recommender.model_info()["collaborative"]
+    als_index = state.recommendations.als_index
+    reranker = state.recommendations.fast_path_config.reranker
+    # Report what is actually serving. Claiming LambdaMART while ordering by ALS
+    # would make a silent degradation invisible, which is the failure this
+    # endpoint exists to catch.
+    reranker_info = reranker.model_info() if reranker is not None else {}
     catalog = state.recommender.meta()
     essential_ok = bool(catalog["count"]) and database_ok
     status = "healthy" if essential_ok and selected else "degraded" if essential_ok else "unhealthy"
@@ -224,8 +230,27 @@ async def health(state: Container) -> dict[str, Any]:
                 if collaborative_available
                 else "Optional artifact not loaded",
             },
+            "als_model": {
+                "status": "healthy" if als_index is not None else "degraded",
+                "detail": (f"{als_index.model_info().get('items')} items, catalog aligned")
+                if als_index is not None
+                else "ALS artifact not loaded; serving CountSketch",
+            },
+            "reranker": {
+                "status": "healthy" if reranker is not None else "degraded",
+                "detail": (
+                    f"LambdaMART active: {reranker_info.get('trees')} trees, {reranker_info.get('features')} features"
+                )
+                if reranker is not None
+                else "degraded to ALS ordering",
+            },
         },
         "catalog": catalog,
+        "ranking": {
+            "retriever": "als" if als_index is not None else "countsketch",
+            "reranker": "lambdamart" if reranker is not None else "none",
+            "reranker_active": reranker is not None,
+        },
         "agent": {
             "provider": selected["provider"] if selected else "deterministic",
             "model": selected["model"] if selected else None,

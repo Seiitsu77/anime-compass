@@ -6,12 +6,16 @@ implicit-feedback ALS model trained on 30.9M positive interactions. The interest
 is the evidence trail behind it: the major model and routing decisions were made with controlled offline experiments,
 including predeclared confirmation rules, and several promising ideas were measured, rejected, and documented.
 
-## Live Demo
+## Live Links
 
-https://anime-compass-xijwv9hjuqvoskonhrwtus.streamlit.app/
+| | |
+|---|---|
+| **Try Live App** | _deploy the FastAPI image and paste the URL here — see [Deployment](#deployment)_ |
+| **Technical Demo** | https://anime-compass-xijwv9hjuqvoskonhrwtus.streamlit.app/ |
 
-No login, no account, no API key. Load an example profile, click Recommend, and inspect the model results and
-architecture from the same page.
+The **Live App** is the product: search titles, pick what you like, exclude what you don't, get personalized
+recommendations, and ask for them in plain English. The **Technical Demo** is the engineering showcase — the
+same ranking path, plus the model results, evaluation protocol, and rejected experiments on one page.
 
 ## Why This Project Is Interesting
 
@@ -33,6 +37,7 @@ architecture from the same page.
 | Ratings scanned | **57,633,278** |
 | Positive interactions in the production model | **30,875,410** |
 | NDCG@10 vs the previous production architecture | **+42.6%** (paired 95% CI `[+0.0641, +0.0897]`) |
+| NDCG@10 from the LambdaMART reranker over ALS | **+15.1%** (paired 95% CI `[+0.0276, +0.0465]`) |
 | Recommendation latency | **~465× lower** (924.6 ms → 2.0 ms benchmark p50) |
 | Evaluation protocol | Full ~18,000-item catalog, all held-out positives |
 
@@ -47,6 +52,21 @@ Latency figures are offline benchmark percentiles on a dedicated machine. The ho
 on shared CPU and its reported timing includes application overhead.
 
 NDCG@10 of 0.2588 is a ranking-quality score against the full catalog, not an accuracy percentage.
+
+**These two percentages come from different user samples and must not be combined.** +42.6% is the old Hybrid
+against the fast ALS path on one controlled 800-user benchmark. +15.1% is ALS against the LambdaMART reranker
+on a separate, untouched 800-user confirmation set, where ALS scored 0.2456 and LambdaMART 0.2828. Multiplying
+or chaining them would be meaningless.
+
+| Reranker confirmation (800 untouched users) | NDCG@10 | Recall@10 |
+|---|---:|---:|
+| ALS alone | 0.2456 | 0.2312 |
+| + learned linear reranker | 0.2725 | 0.2441 |
+| **+ LambdaMART (shipped)** | **0.2828** | **0.2537** |
+
+LambdaMART reranks only the ALS top-300; ALS remains the retriever. Item-item similarity turned out to be a
+useful *reranking feature* despite having been rejected as a *candidate generator*. It does not fix popularity
+bias — the ALS candidate pool is head-heavy to begin with, so this is a ranking win, not a discovery one.
 
 ## Demo
 
@@ -70,8 +90,8 @@ The demo is a single Streamlit page:
            simple request    constrained request
                  |                    |
                  v                    v
-          Production ALS          Rich Hybrid
-            fast path           constraint path
+      Production ALS top-300      Rich Hybrid
+       + LambdaMART rerank      constraint path
                  \                    /
                   v                  v
                     Recommendations
@@ -199,15 +219,42 @@ python scripts/build_serving_catalog.py
 
 ## Deployment
 
-**Streamlit Community Cloud.** The demo imports the recommendation core directly rather than calling FastAPI over
-HTTP — both would run in the same process, so the extra hop would add a failure mode and nothing else.
+Two deployments, from one repository.
 
-The deployment payload is two files, about 14 MB in total:
+### The website (FastAPI + static frontend)
+
+`app/main.py` serves the JSON API under `/api` **and** mounts `frontend/` at `/`, so the site is a single
+same-origin deployment: no build step, no separate frontend host, no CORS to configure, and no `API_BASE_URL` to
+set. The frontend is plain HTML, CSS, and JavaScript.
+
+The included `Dockerfile` targets a Hugging Face Docker Space on port 7860:
+
+1. Create a Docker Space and push this repository to it.
+2. Set `HF_DATASET_REPO=Seiitsu/anime-compass-data` as a Space **variable**. Every artifact in
+   `data/artifacts.manifest.json` is then downloaded and checksum-verified at startup.
+3. Set `GEMINI_API_KEY` as a Space **secret** and `LLM_PROVIDER=gemini` as a variable, for natural-language
+   requests. Recommendations work without it; only the Ask Compass feature degrades.
+4. Check `/api/health`: `ranking.reranker_active` must be `true`, and the `reranker` component must read
+   `LambdaMART active`.
+
+API keys stay backend-side. The browser never sees one — it calls `/api/chat`, which calls the provider.
+
+### The technical demo (Streamlit Community Cloud)
+
+The demo imports the recommendation core directly rather than calling FastAPI over HTTP — both would run in the
+same process, so the extra hop would add a failure mode and nothing else.
+
+The Streamlit payload is four files, about 31 MB in total:
 
 | File | Size | SHA-256 |
 |---|---:|---|
 | `als_production_item_factors.npz` | 7.4 MB | `95c079b1b8f4e0e509c8bab29e4357360f851e3adfd2abc261f358375ee13a10` |
 | `anime_catalog_serving.json` | 6.6 MB | `4b11cf3e5f3d015ed071232e569068248af709e7979e561194b451e3ac716bf3` |
+| `reranker_features.npz` | 17.4 MB | `83cb272bf3ba6e3b5d5185313ab73d952c783c443f8a2f65b4c3c02d2f8e0b82` |
+| `reranker_lambdamart.txt` | 0.6 MB | `78787f8a4c1a79c3fa3c28a2bfe3c52c474b73ea0b6d3a1b4f440930f5127dec` |
+
+The reranker feature artifact is mostly the item-item neighbour matrix. Without it the demo still works and
+reports `Reranker: degraded to ALS`.
 
 Both are hosted in a public Hugging Face Dataset repo and fetched over https at startup, then verified
 before use. Only the two URLs go in Streamlit secrets: the expected checksums are already pinned in

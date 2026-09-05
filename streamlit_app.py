@@ -33,6 +33,8 @@ ARTIFACT_MANIFEST = PROJECT_ROOT / "data" / "artifacts.manifest.json"
 SERVING_CATALOG = PROCESSED / "anime_catalog_serving.json"
 FULL_CATALOG = PROCESSED / "anime_catalog.json"
 DEFAULT_ARTIFACT = PROCESSED / "als_production_item_factors.npz"
+RERANKER_FEATURES = PROCESSED / "reranker_features.npz"
+RERANKER_MODEL = PROCESSED / "reranker_lambdamart.txt"
 
 st.set_page_config(
     page_title="Anime Recommendation System",
@@ -102,6 +104,8 @@ def get_service() -> ShowcaseService:
         expected_sha256=expected_model_sha256,
         expected_catalog_ids_sha256=os.environ.get("ALS_EXPECTED_CATALOG_IDS_SHA256") or None,
         require_production=os.environ.get("ALS_EXPECTED_ROLE", "production") == "production",
+        reranker_feature_path=RERANKER_FEATURES,
+        reranker_model_path=RERANKER_MODEL,
     )
     service.health.error = service.health.error or (None if bootstrap.usable else bootstrap.detail)
     service.catalog_source = catalog_path.name
@@ -124,7 +128,7 @@ def hero() -> None:
     left, middle, right = st.columns(3)
     for column, value, label in (
         (left, "+42.6%", "NDCG@10 vs the previous production architecture"),
-        (middle, "~2 ms", "Fast-path recommendation latency, benchmark p50"),
+        (middle, "+15.1%", "NDCG@10, LambdaMART over ALS on its confirmation set"),
         (right, "30.9M", "Positive interactions in the production model"),
     ):
         with column:
@@ -137,9 +141,17 @@ def hero() -> None:
         "The full FastAPI application also routes explicit catalog constraints to a richer pipeline."
     )
     st.caption(
-        "The 2 ms figure is the offline benchmark p50 on a dedicated machine. The timing shown "
-        "with your results below is what this hosted page actually took, which is slower: "
-        "Streamlit Community Cloud runs on shared CPU and that number includes application overhead."
+        "Two separate benchmarks, deliberately not combined: **+42.6%** is the old ten-channel Hybrid "
+        "against the fast ALS path on one controlled 800-user sample; **+15.1%** is ALS against the "
+        "LambdaMART reranker on a different, untouched 800-user confirmation set. Multiplying them "
+        "would be meaningless."
+    )
+    st.caption(
+        "Benchmark pipeline latency on a dedicated machine is ~0.5 ms for ALS alone and ~5.7 ms with "
+        "the reranker on a small profile, rising to ~15 ms for very large profiles because feature "
+        "construction scales with profile size. The timing shown with your results below is this "
+        "hosted page's wall clock, which is slower again: Streamlit Community Cloud runs on shared "
+        "CPU and includes application overhead."
     )
 
 
@@ -394,8 +406,9 @@ def health_panel(service: ShowcaseService) -> None:
     with st.expander("Deployment health"):
         health = service.health
         st.markdown(
-            f"- **Model:** {health.headline}\n"
-            f"- **Artifact verified:** {'yes' if health.als_available else 'no'}\n"
+            f"- **Ranking path:** {health.headline}\n"
+            f"- **ALS artifact verified:** {'yes' if health.als_available else 'no'}\n"
+            f"- **Reranker:** {health.reranker_headline} — {health.reranker_detail}\n"
             f"- **Catalog aligned:** {'yes' if health.als_covered_items else 'no'}\n"
             f"- **Catalog items:** {health.catalog_items:,}\n"
             f"- **Covered by the trained model:** {health.als_covered_items:,}\n"

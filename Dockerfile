@@ -20,7 +20,7 @@ ENV HOME=/home/user \
 WORKDIR $HOME/app
 COPY --chown=user . $HOME/app
 USER user
-RUN pip install --no-cache-dir --user -r requirements-embeddings.txt
+RUN pip install --no-cache-dir --user -r requirements-web.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}', revision='${EMBEDDING_MODEL_REVISION}', device='cpu', trust_remote_code=False)"
 
 EXPOSE 7860
