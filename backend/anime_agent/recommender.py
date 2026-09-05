@@ -1079,7 +1079,33 @@ class AnimeRecommender:
             "session": "The session has no saved preference signals.",
             "novelty": "No less-famous or mainstream preference was requested.",
         }
-        has_personalization = any(active_channels[channel] for channel in active_channels if channel != "quality")
+        # A hard filter is not a taste signal. "Show me Fantasy anime" populates
+        # the metadata, dense, and semantic profiles purely from the filter
+        # genres, which flips the request into hybrid mode -- yet after
+        # filtering, every surviving candidate matches those genres, so those
+        # channels are constant or noise across the whole candidate set. The
+        # effect was that a browse request diluted the only channel that can
+        # actually rank (quality) from weight 1.0 to 0.35, and the catalog's
+        # most obscure entries surfaced: for "Fantasy", a 529-member title
+        # outranked Fullmetal Alchemist.
+        #
+        # So personalization requires evidence about *this user's taste*, not
+        # merely the presence of a constraint.
+        has_taste_signal = bool(
+            liked_ids
+            or self._preference_text_is_informative(
+                preference_text, selected_genres, sorted(format_keys), blocked_genres
+            )
+            or all_preferred_studios
+            or all_preferred_staff
+            or all_preferred_characters
+            or all_preferred_voice_actors
+            or self._has_session_signal(session_profile)
+            or novelty_preference != "neutral"
+        )
+        has_personalization = has_taste_signal and any(
+            active_channels[channel] for channel in active_channels if channel != "quality"
+        )
         recommendation_mode = "hybrid" if has_personalization else "quality_fallback"
         if recommendation_mode == "quality_fallback":
             effective_weights = {channel: (1.0 if channel == "quality" else 0.0) for channel in configured_weights}
@@ -2357,6 +2383,90 @@ class AnimeRecommender:
             return False
 
         return True
+
+    # Words that describe the *request* rather than the taste behind it. They
+    # are already captured as structured constraints, so they add nothing a
+    # ranking channel can use.
+    _GENERIC_REQUEST_TOKENS = frozenset(
+        {
+            "anime",
+            "show",
+            "shows",
+            "series",
+            "something",
+            "some",
+            "want",
+            "watch",
+            "watching",
+            "looking",
+            "look",
+            "recommend",
+            "recommendation",
+            "recommendations",
+            "suggest",
+            "give",
+            "find",
+            "please",
+            "good",
+            "great",
+            "nice",
+            "best",
+            "short",
+            "shorter",
+            "long",
+            "longer",
+            "new",
+            "newer",
+            "old",
+            "older",
+            "recent",
+            "title",
+            "titles",
+            "like",
+            "preferably",
+            # `tokenize` keeps these, and the legacy path passes the whole user
+            # message as `query`, so without them "I want X, but no Y" looked
+            # informative purely because of "i", "but", and "no".
+            "i",
+            "but",
+            "no",
+            "not",
+            "me",
+            "my",
+            "would",
+            "need",
+            "really",
+            "prefer",
+            "any",
+            "more",
+            "else",
+            "anything",
+        }
+    )
+
+    def _preference_text_is_informative(
+        self,
+        preference_text: str,
+        selected_genres: set[str],
+        selected_formats: list[str] | None,
+        excluded_genres: set[str] | None = None,
+    ) -> bool:
+        """True when free text says something the filters do not already say.
+
+        "a short fantasy anime" alongside `include_genres=[Fantasy]` and
+        `max_episodes=13` is not a taste signal: every token restates a
+        constraint. Treating it as one activated the text channels, which then
+        outweighed quality across thousands of equally-matching candidates and
+        surfaced the catalog's most obscure entries.
+        """
+        if not preference_text:
+            return False
+        redundant = set(self._GENERIC_REQUEST_TOKENS)
+        for genre in (selected_genres or set()) | (excluded_genres or set()):
+            redundant.update(tokenize(genre))
+        for media_format in selected_formats or []:
+            redundant.update(tokenize(str(media_format)))
+        return any(token not in redundant for token in tokenize(preference_text))
 
     def _genre_match_score(self, item: dict[str, Any], selected_genres: set[str]) -> float:
         if not selected_genres:

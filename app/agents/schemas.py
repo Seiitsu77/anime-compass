@@ -13,6 +13,7 @@ from backend.anime_agent.intent import (
 from backend.anime_agent.intent import (
     InferredConstraint as LegacyInferredConstraint,
 )
+from backend.anime_agent.recommender import normalize_label
 
 EntityType = Literal[
     "anime",
@@ -29,6 +30,15 @@ EntityType = Literal[
     "result_index",
 ]
 EntityRelation = Literal["direct", "reference", "exclude", "watched", "director_of", "related_to"]
+
+
+def _is_nameable(value: str) -> bool:
+    """True when a string could plausibly name a catalog entity.
+
+    Stopwords tokenize to nothing, so a value like "With" or "The" leaves an
+    empty label and cannot match anything.
+    """
+    return bool(normalize_label(value))
 
 
 class IntentEntityMention(BaseModel):
@@ -133,6 +143,35 @@ class AgentIntent(BaseModel):
         )
         for field_name in list_fields:
             setattr(self, field_name, self._dedupe_strings(getattr(self, field_name)))
+
+        # A required entity that carries no content is worse than no constraint:
+        # it filters the catalog to nothing. The parser once produced
+        # required_characters=["With"] from the preposition in "something with
+        # dark psychological mind games", which then resolved against no
+        # catalog entity and emptied the result set.
+        # Entity mentions are resolved as hard constraints, so a mention that
+        # names nothing empties the result set rather than narrowing it. A
+        # mention carrying only an index still refers to a previous result and
+        # is kept.
+        self.entity_mentions = [
+            mention for mention in self.entity_mentions if mention.index is not None or _is_nameable(mention.text)
+        ]
+
+        for entity_field in (
+            "required_studios",
+            "required_staff",
+            "required_voice_actors",
+            "required_characters",
+            "preferred_studios",
+            "preferred_staff",
+            "preferred_voice_actors",
+            "preferred_characters",
+        ):
+            setattr(
+                self,
+                entity_field,
+                [value for value in getattr(self, entity_field) if _is_nameable(value)],
+            )
 
         for required_name, preferred_name in (
             ("required_studios", "preferred_studios"),

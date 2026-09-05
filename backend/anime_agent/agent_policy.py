@@ -111,9 +111,11 @@ Ranking rules:
 RESPONSE_TASK_POLICY = """TASK: answer the user using only the verified catalog evidence below.
 
 The backend has already selected and executed every tool and fixed the order of
-the results. List exactly the verified result titles, in the order given, and
-explain each choice with user-facing catalog evidence such as premise, themes,
-cast, staff, format, or the constraints it satisfies.
+the results, and the full list is shown to the user separately. Cover the first
+few results in the order given -- five or six is plenty -- and explain each with
+user-facing catalog evidence such as premise, themes, cast, staff, format, or
+the constraints it satisfies. Keep each explanation to one or two sentences;
+a complete but truncated answer is worse than a short finished one.
 
 Never add, replace, or infer a title, person, score, episode count, date, studio,
 role, or relationship that is absent from the evidence. For anime details, give a

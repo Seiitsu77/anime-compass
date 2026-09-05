@@ -22,6 +22,15 @@ from .tools import CatalogToolRegistry, ToolContractError, ValidatedToolCall
 logger = logging.getLogger("anime_compass.agent")
 
 
+class GroundingRejected(ValueError):
+    """A provider answered, but the answer failed the grounding contract.
+
+    Distinct from ProviderUnavailable on purpose: one means "this model cannot
+    be reached", the other means "this model's output is not usable". Only the
+    first is worth retrying against another provider.
+    """
+
+
 class DeterministicClient:
     """Stand-in provider for the legacy agent's deterministic paths.
 
@@ -197,7 +206,7 @@ class AgentOrchestrator:
                         timeout=self.settings.llm_timeout_seconds,
                     )
                     if not self._validated_generated_answer(candidate, response):
-                        raise ValueError("grounded response validation failed")
+                        raise GroundingRejected("grounded response validation failed")
                     response["answer"] = candidate
                     response["mode"] = f"{provider.name}_grounded"
                     response_provider = provider
@@ -218,10 +227,16 @@ class AgentOrchestrator:
                         }
                     )
                     failed_providers.add(provider_name)
-                    if isinstance(exc, ValueError) and str(exc) == "grounded response validation failed":
+                    if isinstance(exc, GroundingRejected):
+                        # The provider answered; its answer just did not satisfy
+                        # the grounding contract. Trying the next provider costs
+                        # another full generation (15-25s on the local model) to
+                        # almost certainly fail the same check, so stop here and
+                        # serve the deterministic answer instead. Failover is for
+                        # providers that are down, not for ones that disagree.
                         self._record_success(provider_name)
-                    else:
-                        self._record_failure(provider_name)
+                        break
+                    self._record_failure(provider_name)
             generation_ms = (time.perf_counter() - generation_started) * 1000
         elif selected_provider is not None:
             self._record_success(selected_provider.name)

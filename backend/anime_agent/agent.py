@@ -38,6 +38,11 @@ Keep lists short unless the user asks for more.
 """
 )
 
+# How many verified titles a generated answer must name before it counts as
+# grounded. Every title it names must still be a real one, and excluded titles
+# still reject outright; this only stops "grounded" from meaning "exhaustive".
+MINIMUM_GROUNDED_TITLES = 3
+
 INTRODUCTION_PATTERNS = (
     "introduce ",
     "introduction to ",
@@ -2532,7 +2537,13 @@ class AnimeAgent:
         if any(marker in content_key for marker in ("###", "shared elements", "differences", "breakdown")):
             return False
 
-        expected = min(requested_limit, len(result_titles))
+        # Grounding means "every title named is a verified one", not "every
+        # verified one is named". Requiring the full list conflated the two: a
+        # correct, well-written answer covering the top few was rejected, the
+        # request then paid a second provider to fail the same way, and the user
+        # waited ~30s for the deterministic template. The result list itself is
+        # rendered from the tool output, so prose that summarises it is fine.
+        expected = min(MINIMUM_GROUNDED_TITLES, requested_limit, len(result_titles))
         catalog_lines = 0
         for line in content.splitlines():
             if not re.match(r"^\s*(?:[-*]|\d+[.)])\s+", line):
