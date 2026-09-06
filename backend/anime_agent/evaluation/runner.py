@@ -7,7 +7,6 @@ import json
 import os
 import platform
 import re
-import sys
 import time
 import tracemalloc
 from collections import Counter, defaultdict
@@ -23,6 +22,7 @@ from backend.anime_agent.collaborative import CollaborativeIndex
 from backend.anime_agent.lightfm_serving import LightFMServingIndex
 from backend.anime_agent.recommender import AnimeRecommender
 
+from ..process_memory import current_process_rss_bytes, peak_process_rss_bytes
 from .collaborative_baselines import (
     ALSCollaborativeAdapter,
     ALSModel,
@@ -163,99 +163,11 @@ def _measure_build(
 
 
 def _peak_process_rss_bytes() -> int | None:
-    if os.name == "nt":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            class ProcessMemoryCounters(ctypes.Structure):
-                _fields_ = [
-                    ("cb", wintypes.DWORD),
-                    ("PageFaultCount", wintypes.DWORD),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t),
-                ]
-
-            counters = ProcessMemoryCounters()
-            counters.cb = ctypes.sizeof(counters)
-            get_current_process = ctypes.windll.kernel32.GetCurrentProcess
-            get_current_process.restype = wintypes.HANDLE
-            get_process_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
-            get_process_memory_info.argtypes = [
-                wintypes.HANDLE,
-                ctypes.POINTER(ProcessMemoryCounters),
-                wintypes.DWORD,
-            ]
-            get_process_memory_info.restype = wintypes.BOOL
-            success = get_process_memory_info(
-                get_current_process(),
-                ctypes.byref(counters),
-                counters.cb,
-            )
-            return int(counters.PeakWorkingSetSize) if success else None
-        except (AttributeError, OSError):
-            return None
-    try:
-        import resource
-
-        value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)  # type: ignore[attr-defined]
-        return value if sys.platform == "darwin" else value * 1024
-    except (ImportError, ValueError):
-        return None
+    return peak_process_rss_bytes()
 
 
 def _current_process_rss_bytes() -> int | None:
-    if os.name == "nt":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            class ProcessMemoryCounters(ctypes.Structure):
-                _fields_ = [
-                    ("cb", wintypes.DWORD),
-                    ("PageFaultCount", wintypes.DWORD),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t),
-                ]
-
-            counters = ProcessMemoryCounters()
-            counters.cb = ctypes.sizeof(counters)
-            get_current_process = ctypes.windll.kernel32.GetCurrentProcess
-            get_current_process.restype = wintypes.HANDLE
-            get_process_memory_info = ctypes.windll.psapi.GetProcessMemoryInfo
-            get_process_memory_info.argtypes = [
-                wintypes.HANDLE,
-                ctypes.POINTER(ProcessMemoryCounters),
-                wintypes.DWORD,
-            ]
-            get_process_memory_info.restype = wintypes.BOOL
-            success = get_process_memory_info(
-                get_current_process(),
-                ctypes.byref(counters),
-                counters.cb,
-            )
-            return int(counters.WorkingSetSize) if success else None
-        except (AttributeError, OSError):
-            return None
-    if sys.platform.startswith("linux"):
-        try:
-            resident_pages = int(Path("/proc/self/statm").read_text().split()[1])
-            return resident_pages * int(os.sysconf("SC_PAGE_SIZE"))
-        except (IndexError, OSError, ValueError):
-            return None
-    return _peak_process_rss_bytes()
+    return current_process_rss_bytes()
 
 
 def _environment_info() -> dict[str, Any]:

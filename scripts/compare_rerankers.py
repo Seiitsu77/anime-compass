@@ -41,6 +41,7 @@ from backend.anime_agent.evaluation.reranking import (  # noqa: E402
     StandardScaler,
 )
 from backend.anime_agent.evaluation.split import SplitStore  # noqa: E402
+from backend.anime_agent.process_memory import current_process_rss_bytes  # noqa: E402
 from scripts.evaluate_reranker import (  # noqa: E402
     FrozenALS,
     hit_at_k,
@@ -341,39 +342,10 @@ def main() -> int:
         )
     summary["deployment"] = deployment
 
-    # Resident memory attributable to each option.
-    try:
-        import resource  # noqa: F401  (POSIX only)
-    except ImportError:
-        pass
-    try:
-        import ctypes
-
-        class Counters(ctypes.Structure):
-            _fields_ = [
-                ("cb", ctypes.c_ulong),
-                ("PageFaultCount", ctypes.c_ulong),
-                ("PeakWorkingSetSize", ctypes.c_size_t),
-                ("WorkingSetSize", ctypes.c_size_t),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t),
-                ("PeakPagefileUsage", ctypes.c_size_t),
-            ]
-
-        counters = Counters()
-        counters.cb = ctypes.sizeof(Counters)
-        ctypes.windll.psapi.GetProcessMemoryInfo(
-            ctypes.windll.kernel32.GetCurrentProcess(),
-            ctypes.byref(counters),
-            counters.cb,
-        )
-        summary["process_rss_bytes"] = int(counters.WorkingSetSize)
-        print(f"  process RSS with both models loaded: {counters.WorkingSetSize / 1e6:.0f} MB")
-    except (AttributeError, OSError):
-        pass
+    resident = current_process_rss_bytes()
+    if resident is not None:
+        summary["process_rss_bytes"] = resident
+        print(f"  process RSS with both models loaded: {resident / 1e6:.0f} MB")
 
     (RESULTS / "reranker_selection.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(f"\nwrote {RESULTS / 'reranker_selection.json'}")
