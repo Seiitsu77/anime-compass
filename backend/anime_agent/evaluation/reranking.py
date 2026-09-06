@@ -118,17 +118,28 @@ class RerankerFeatureSpace:
         self.log_train_ratings = np.log1p(train_rating_count).astype(np.float32)
         self.train_rating_mean = (train_rating_mean - global_rating_mean).astype(np.float32)
         self.train_bayes = (train_bayes - global_rating_mean).astype(np.float32)
-        # Item-item similarity as a lookup from (item row) to {neighbour row: score}.
-        self._neighbors: list[dict[int, float]] = []
+        # Item-item similarity, stored as the artifact stores it.
+        #
+        # This was a list of 18,064 dicts, one per item, holding 3.1M entries in
+        # total. That is the same information the npz already holds as two
+        # arrays, and re-encoding it as Python dicts cost 313 MiB against the
+        # arrays' 28 MiB -- an 11x expansion that made the reranker the second
+        # largest consumer in the process.
+        #
+        # The rows are ragged once zero scores are dropped, so they are packed
+        # into flat arrays with a row-offset index. Dropping the zeros here
+        # rather than at lookup time keeps the scan identical to the dict's:
+        # both visit exactly the positive-scored neighbours, in artifact order.
+        self._neighbor_offsets: npt.NDArray[np.int64] | None = None
+        self._neighbor_ids: npt.NDArray[np.int32] | None = None
+        self._neighbor_scores: npt.NDArray[np.float32] | None = None
         if neighbor_indices is not None and neighbor_scores is not None:
-            for row in range(len(anime_ids)):
-                self._neighbors.append(
-                    {
-                        int(neighbor): float(score)
-                        for neighbor, score in zip(neighbor_indices[row], neighbor_scores[row], strict=False)
-                        if score > 0
-                    }
-                )
+            keep = neighbor_scores > 0
+            offsets = np.zeros(len(anime_ids) + 1, dtype=np.int64)
+            np.cumsum(keep.sum(axis=1), out=offsets[1:])
+            self._neighbor_offsets = offsets
+            self._neighbor_ids = np.ascontiguousarray(neighbor_indices[keep], dtype=np.int32)
+            self._neighbor_scores = np.ascontiguousarray(neighbor_scores[keep], dtype=np.float32)
 
     # ------------------------------------------------------------- loading
 
@@ -286,9 +297,24 @@ class RerankerFeatureSpace:
         profile_set = set(profile)
         best_sim = np.zeros(n, dtype=np.float32)
         top5_sim = np.zeros(n, dtype=np.float32)
-        if self._neighbors:
+        if self._neighbor_offsets is not None:
+            offsets = self._neighbor_offsets
+            neighbor_ids = self._neighbor_ids
+            neighbor_scores = self._neighbor_scores
+            assert neighbor_ids is not None and neighbor_scores is not None
             for position, row in enumerate(candidate_rows):
-                shared = [score for neighbor, score in self._neighbors[row].items() if neighbor in profile_set]
+                start, stop = int(offsets[row]), int(offsets[row + 1])
+                # tolist widens float32 to the same double float() produced, so
+                # the sort and the top-5 sum below are bit-for-bit unchanged.
+                shared = [
+                    score
+                    for neighbor, score in zip(
+                        neighbor_ids[start:stop].tolist(),
+                        neighbor_scores[start:stop].tolist(),
+                        strict=False,
+                    )
+                    if neighbor in profile_set
+                ]
                 if shared:
                     shared.sort(reverse=True)
                     best_sim[position] = shared[0]
