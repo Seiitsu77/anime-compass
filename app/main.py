@@ -142,7 +142,7 @@ def create_app(
                 ),
             ),
             sessions=sessions,
-            entity_resolver=EntityResolver(loaded_catalog),
+            entity_resolver=recommender.entity_resolver,
             agent=agent,
         )
         sessions.cleanup_expired()

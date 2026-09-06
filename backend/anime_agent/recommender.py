@@ -9,6 +9,8 @@ from collections.abc import Iterable, Iterator, Mapping
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
 
+from .entities import EntityResolver
+
 try:
     import numpy as np
 except ImportError:  # The recommender still works without the dense hybrid channels.
@@ -411,6 +413,7 @@ class AnimeRecommender:
         self.catalog = catalog
         self.semantic_index = semantic_index
         self.collaborative_index = collaborative_index
+        self._entity_resolver: EntityResolver | None = None
         self.weights = normalize_weights({**DEFAULT_CHANNEL_WEIGHTS, **(weights or {})})
         self.item_ids = [int(item["id"]) for item in catalog]
         self.index_by_id = {anime_id: index for index, anime_id in enumerate(self.item_ids)}
@@ -456,6 +459,24 @@ class AnimeRecommender:
         self.svd_feature_index: dict[str, int] = {}
         self.svd_components: Any = None
         self.svd_vectors = self._build_svd_index()
+
+    @property
+    def entity_resolver(self) -> EntityResolver:
+        """The one resolver for this catalog, built on first use.
+
+        The API container and the agent both need entity resolution over the
+        same catalog, and each used to construct its own. The two were
+        measurably identical -- same input list, no mutating methods -- and cost
+        98 MiB of duplicated index. Owning it here gives every caller the same
+        instance without any of them having to coordinate.
+
+        Built lazily because the fast recommendation path never resolves an
+        entity, and a recommender used only for scoring should not pay for an
+        index it will not read.
+        """
+        if self._entity_resolver is None:
+            self._entity_resolver = EntityResolver(self.catalog)
+        return self._entity_resolver
 
     def model_info(self) -> dict[str, Any]:
         return {

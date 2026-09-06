@@ -191,7 +191,9 @@ def build_staged_app() -> Recorder:
         agent = main_module.AgentOrchestrator(recommender, sessions, providers, settings)
 
     with recorder.step("EntityResolver"):
-        resolver = main_module.EntityResolver(catalog)
+        # Mirrors the lifespan, which takes the recommender's shared instance
+        # rather than constructing a second one over the same catalog.
+        resolver = recommender.entity_resolver
 
     # Keep every object alive so nothing is reclaimed before the final reading.
     globals()["_keepalive"] = (catalog, semantic, collaborative, als, reranker, recommender, sessions, agent, resolver)

@@ -6,7 +6,6 @@ from collections.abc import Callable
 from typing import Any
 
 from .agent_policy import SYSTEM_POLICY
-from .entities import EntityResolver
 from .intent import (
     EntityMention,
     InferredConstraint,
@@ -255,7 +254,7 @@ class AnimeAgent:
     ):
         self.recommender = recommender
         self.client: ChatClient = client if client is not None else OllamaClient()
-        self.entity_resolver = EntityResolver(recommender.catalog)
+        self.entity_resolver = recommender.entity_resolver
         self.get_session_profile = get_session_profile or (lambda _session_id: {})
         self.update_session_preferences = update_session_preferences or (lambda _session_id, _patch: {})
         self.tools: dict[str, Callable[[dict[str, Any]], Any]] = {
