@@ -1,0 +1,90 @@
+# Anime Compass on Vercel container functions.
+#
+# Same application, same artifacts, same models as the Hugging Face Spaces
+# image in `Dockerfile`. Only three things differ, and all three come from the
+# platform rather than from any choice about how the recommender behaves:
+#
+#   1. The server binds Vercel's $PORT instead of a fixed 7860.
+#   2. Everything the process reads at runtime is baked into the image, because
+#      container functions scale to zero and a cold start should not spend its
+#      first half-minute downloading 192 MB of artifacts and 90 MB of weights.
+#   3. Writable state lives in /tmp, because the function filesystem does not
+#      persist between invocations.
+#
+# FastAPI still serves `frontend/` at `/`, so the browser sees one origin and
+# needs no CORS and no separate frontend deployment.
+
+FROM python:3.12-slim
+
+# Pinned by revision, not by tag: the embedding matrix in the artifact repo was
+# produced by exactly this model, and a silently newer revision would put the
+# precomputed document vectors and the live query vectors in different spaces.
+ARG EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ARG EMBEDDING_MODEL_REVISION=1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+ARG HF_DATASET_REPO=Seiitsu/anime-compass-data
+ARG HF_DATASET_REVISION=main
+
+RUN useradd -m -u 1000 user
+
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH \
+    APP_HOST=0.0.0.0 \
+    APP_PORT=8000 \
+    EMBEDDING_PROVIDER=sentence_transformers \
+    EMBEDDING_MODEL=${EMBEDDING_MODEL} \
+    EMBEDDING_MODEL_REVISION=${EMBEDDING_MODEL_REVISION} \
+    EMBEDDING_DIMENSIONS=384 \
+    EMBEDDING_DEVICE=cpu \
+    EMBEDDING_LOCAL_FILES_ONLY=true \
+    HF_DATASET_REPO=${HF_DATASET_REPO} \
+    HF_DATASET_REVISION=${HF_DATASET_REVISION} \
+    HF_HOME=/home/user/.cache/huggingface \
+    DATABASE_URL=sqlite:////tmp/anime_compass.db \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER user
+WORKDIR $HOME/app
+
+# Layers are ordered so that editing application code rebuilds only the last
+# one. Dependencies, model weights and artifacts are ~1.7 GB between them and
+# change far less often than the source does.
+
+# 1. Dependencies. requirements-web.txt pulls in requirements-embeddings.txt,
+#    which pulls in requirements-api.txt, so all three have to be present.
+COPY --chown=user requirements-api.txt requirements-embeddings.txt requirements-web.txt ./
+RUN pip install --no-cache-dir --user -r requirements-web.txt
+
+# 2. Model weights. EMBEDDING_LOCAL_FILES_ONLY makes the running container read
+#    this cache and never reach the network, so if this step were missing the
+#    application would fail at startup rather than quietly downloading.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}', revision='${EMBEDDING_MODEL_REVISION}', device='cpu', trust_remote_code=False)"
+
+# 3. Runtime artifacts, checksum-verified against data/artifacts.manifest.json.
+#    Only the manifest and the downloader are copied here, so a change anywhere
+#    else in the tree does not re-download 192 MB.
+#
+#    `data/processed` is in .dockerignore, so these files exist only because
+#    this step created them. The application calls the same routine at startup;
+#    finding every file present and matching, it verifies and returns instead
+#    of downloading.
+COPY --chown=user data/artifacts.manifest.json data/artifacts.manifest.json
+COPY --chown=user scripts/download_artifacts.py scripts/download_artifacts.py
+RUN python scripts/download_artifacts.py \
+        --repo-id "${HF_DATASET_REPO}" \
+        --revision "${HF_DATASET_REVISION}"
+
+# 4. Application source, including frontend/ which FastAPI mounts at /.
+COPY --chown=user . .
+
+# Documentation only: Vercel injects $PORT and the CMD below honours it.
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import os,urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('PORT','8000')}/api/ready\", timeout=3)" || exit 1
+
+# Shell form so $PORT expands at run time, and `exec` so uvicorn becomes PID 1
+# and receives SIGTERM directly. Without exec the shell would hold PID 1, the
+# signal would go to it instead, and a scale-to-zero shutdown would be a kill
+# rather than a graceful drain.
+CMD ["sh", "-c", "exec python run_app.py --host 0.0.0.0 --port ${PORT:-8000}"]
