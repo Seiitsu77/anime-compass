@@ -3,11 +3,14 @@
 .github
 .gitattributes
 
-# Secrets and local environments
+# Secrets and local environments. The glob matters: an ad-hoc `.audit-venv`
+# was 613 MB and matched none of the explicit names, so it would have been
+# copied into the image.
 .env
 .venv
 venv
-.lightfm-env
+*venv
+*-env
 .tools
 
 # Python caches
