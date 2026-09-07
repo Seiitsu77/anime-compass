@@ -56,6 +56,28 @@ ARG HF_DATASET_REVISION=main
 
 RUN useradd -m -u 1000 user
 
+# LightGBM's native extension links against GNU OpenMP. python:3.12-slim does
+# not ship it, so `import lightgbm` fails with
+#
+#     OSError: libgomp.so.1: cannot open shared object file
+#
+# The pip wheel installs cleanly regardless -- nothing resolves the shared
+# object until the module is first imported -- which is why this surfaced in
+# the build's dependency preflight rather than at install time, and would
+# otherwise have surfaced as a silently unavailable reranker in production.
+#
+# This is the runtime stage: there is only one, so the library is present in
+# the image that actually runs rather than in a builder that gets discarded.
+# `ldconfig -p` afterwards is a real check, not decoration -- under `set -eu` a
+# grep that matches nothing fails the build.
+RUN set -eu; \
+    . /etc/os-release; \
+    echo "[build] base image: ${PRETTY_NAME}"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libgomp1; \
+    rm -rf /var/lib/apt/lists/*; \
+    ldconfig -p | grep libgomp
+
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH \
     APP_HOST=0.0.0.0 \
