@@ -1,0 +1,15 @@
+# Container-only constraint: the CPU build of PyTorch, and nothing else.
+#
+# Applied with `-c` to every pip install in Dockerfile.vercel. Passing it to a
+# later install is what stops that install from silently swapping the CPU wheel
+# for the default PyPI one -- pip resolves `torch` transitively through
+# sentence-transformers, and without this pin the second install would satisfy
+# that by pulling the CUDA build and its ~5 GB of NVIDIA dependencies back in.
+#
+# The pin is deliberately unsatisfiable from PyPI: only the PyTorch CPU index
+# publishes a `+cpu` local version. An install that tries to take torch from
+# anywhere else therefore fails loudly instead of quietly reintroducing CUDA.
+#
+# Same public version as the default build (2.14.0), different binary
+# distribution. Nothing outside the container image reads this file.
+torch==2.14.0+cpu

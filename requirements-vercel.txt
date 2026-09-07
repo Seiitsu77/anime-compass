@@ -1,0 +1,29 @@
+# PyTorch for the Vercel container image: CPU-only, same public version.
+#
+# The default PyPI wheel declares seven CUDA dependencies, all gated on
+# `platform_system == "Linux"`, so they appear only in the Linux image and not
+# in local development on Windows or macOS:
+#
+#     cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,
+#                  cusparse,nvjitlink,nvrtc,nvtx]==13.0.3
+#     cuda-bindings<14,>=13.0.3
+#     nvidia-cudnn-cu13==9.24.0.43
+#     nvidia-cusparselt-cu13==0.8.1
+#     nvidia-nccl-cu13==2.30.7
+#     nvidia-nvshmem-cu13==3.4.5
+#     triton~=3.8.0
+#
+# The function has no GPU and EMBEDDING_DEVICE is cpu, so none of it can ever
+# execute. It filled the build workspace before the image could be pushed.
+#
+# The CPU wheel is the same 2.14.0 release built without those kernels:
+# 196.3 MB compressed against 554.6 MB, 715.5 MB unpacked against 1144.2 MB,
+# and its metadata declares no NVIDIA, CUDA or Triton dependency at all.
+#
+# This file is container-only. requirements-web.txt, requirements-api.txt and
+# the development and evaluation environments are untouched, and they keep
+# resolving torch the ordinary way.
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+torch==2.14.0+cpu
