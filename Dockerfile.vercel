@@ -142,14 +142,40 @@ RUN python scripts/download_artifacts.py \
 # 6. Application source, including frontend/ which FastAPI mounts at /.
 COPY --chown=user . .
 
-# Documentation only: Vercel injects $PORT and the CMD below honours it.
-EXPOSE 8000
+# 7. Build the launcher, resolving the interpreter from this image rather than
+#    assuming where it lives. Vercel wraps CMD in its own entrypoint and does
+#    not necessarily preserve PATH, so neither the launcher nor anything it
+#    starts may depend on it. `sh -n` parses the result, turning a shell syntax
+#    error into a build failure instead of a silent exit at run time.
+RUN set -eu; \
+    PYBIN="$(python -c 'import sys; print(sys.executable)')"; \
+    echo "[build] interpreter resolved to ${PYBIN}"; \
+    test -x "${PYBIN}"; \
+    printf '%s' "${PYBIN}" > /home/user/.python-bin; \
+    sed -e "s|__PYTHON_BIN__|${PYBIN}|" -e "s|__APP_DIR__|${HOME}/app|" \
+        scripts/vercel_start.sh > /home/user/vercel_start.sh; \
+    chmod +x /home/user/vercel_start.sh; \
+    /bin/sh -n /home/user/vercel_start.sh; \
+    grep -E '^(PY|APP_DIR)=' /home/user/vercel_start.sh; \
+    printf '%s\n' \
+        'import os, urllib.request' \
+        'port = os.environ.get("PORT", "80")' \
+        'urllib.request.urlopen("http://127.0.0.1:" + port + "/api/ready", timeout=3)' \
+        > /home/user/healthcheck.py; \
+    "${PYBIN}" -m py_compile /home/user/healthcheck.py
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD python -c "import os,urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('PORT','8000')}/api/ready\", timeout=3)" || exit 1
+# Documentation only: Vercel injects $PORT and the launcher honours it,
+# defaulting to 80.
+EXPOSE 80
 
-# Shell form so $PORT expands at run time, and `exec` so uvicorn becomes PID 1
-# and receives SIGTERM directly. Without exec the shell would hold PID 1, the
-# signal would go to it instead, and a scale-to-zero shutdown would be a kill
-# rather than a graceful drain.
-CMD ["sh", "-c", "exec python run_app.py --host 0.0.0.0 --port ${PORT:-8000}"]
+# Also absolute: the interpreter path baked in above, not a bare `python`. The
+# probe is a file rather than `-c`, so no quoting has to survive two shells.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD /bin/sh -c 'exec "$(cat /home/user/.python-bin)" /home/user/healthcheck.py' || exit 1
+
+# Absolute interpreter, absolute script. `/bin/sh` is named outright rather
+# than relying on PATH or on the shebang being honoured, and the launcher
+# `exec`s uvicorn so it becomes PID 1 and takes SIGTERM directly -- without
+# that the shell holds PID 1 and a scale-to-zero shutdown is a kill rather
+# than a graceful drain.
+CMD ["/bin/sh", "/home/user/vercel_start.sh"]
