@@ -23,14 +23,16 @@ import importlib
 import os
 import sys
 
-# Every third-party import the application makes at startup, cheapest first, so
-# a failure names the shallowest broken dependency rather than a symptom of it.
+# Deliberately cheap. This used to import torch and sentence-transformers too,
+# which cost about six seconds before uvicorn could bind -- and binding fast is
+# now the whole point, since the platform gives the container roughly fifteen
+# seconds to accept a connection. The heavy stack is still proven importable,
+# but at build time under `env -i`, where its cost is paid once instead of on
+# every cold start. What remains here is the check that the import path itself
+# works, which is what actually broke.
 REQUIRED_MODULES = (
     "fastapi",
     "numpy",
-    "lightgbm",
-    "sentence_transformers",
-    "torch",
 )
 
 

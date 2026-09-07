@@ -22,6 +22,7 @@ from app.api.routes import router
 from app.core.config import PROJECT_ROOT, Settings, get_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging
+from app.core.startup import ApplicationStartup, PhaseRecorder
 from app.embeddings.index import SemanticEmbeddingIndex
 from app.embeddings.sentence_transformer import SentenceTransformerEmbeddingProvider
 from app.repositories.session_repository import SQLiteSessionRepository
@@ -88,38 +89,60 @@ def create_app(
     settings = settings or get_settings()
     configure_logging()
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        if catalog is None and settings.hf_dataset_repo:
-            await asyncio.to_thread(
-                ensure_artifacts,
-                settings.hf_dataset_repo,
-                revision=settings.hf_dataset_revision,
-            )
-        loaded_catalog = catalog if catalog is not None else load_or_create_catalog(PROJECT_ROOT)
-        loaded_semantic = semantic_index or _load_semantic_index(settings, loaded_catalog)
-        loaded_collaborative = collaborative_index or _load_collaborative_index(
-            settings,
-            loaded_catalog,
-        )
+    def build_container(recorder: PhaseRecorder) -> AppContainer:
+        """Everything the application needs before it can serve a request.
+
+        Runs in a worker thread, off the event loop, so the server can listen
+        and answer health checks while it proceeds. Each step is timed and its
+        resident cost recorded, because cold start is the constraint being
+        managed and it has to be visible from a deployment's own logs.
+        """
+        with recorder.phase("artifacts"):
+            if catalog is None and settings.hf_dataset_repo:
+                ensure_artifacts(settings.hf_dataset_repo, revision=settings.hf_dataset_revision)
+
+        with recorder.phase("catalog"):
+            loaded_catalog = catalog if catalog is not None else load_or_create_catalog(PROJECT_ROOT)
+
+        with recorder.phase("semantic_index"):
+            loaded_semantic = semantic_index or _load_semantic_index(settings, loaded_catalog)
+
+        with recorder.phase("collaborative_index"):
+            loaded_collaborative = collaborative_index or _load_collaborative_index(settings, loaded_catalog)
+
         # ALS is the primary collaborative source for users with history.
         # CountSketch stays loaded regardless: it is the sparse-user fallback,
         # the only cheap source with tail exposure, and the degradation path if
         # the ALS artifact is missing or fails validation.
-        loaded_als = _load_als_index(settings, loaded_catalog, quality_source=loaded_collaborative)
-        loaded_reranker = _load_reranker(settings, loaded_catalog, loaded_als)
-        recommender = AnimeRecommender(
-            loaded_catalog,
-            semantic_index=loaded_semantic,
-            collaborative_index=loaded_collaborative,
-        )
-        sessions = session_repository or SQLiteSessionRepository(
-            settings.database_url,
-            retention_days=settings.session_retention_days,
-        )
-        active_providers = providers or _build_providers(settings)
-        agent = AgentOrchestrator(recommender, sessions, active_providers, settings)
-        app.state.container = AppContainer(
+        with recorder.phase("als_index"):
+            loaded_als = _load_als_index(settings, loaded_catalog, quality_source=loaded_collaborative)
+
+        with recorder.phase("reranker"):
+            loaded_reranker = _load_reranker(settings, loaded_catalog, loaded_als)
+
+        with recorder.phase("recommender"):
+            recommender = AnimeRecommender(
+                loaded_catalog,
+                semantic_index=loaded_semantic,
+                collaborative_index=loaded_collaborative,
+            )
+
+        with recorder.phase("sessions"):
+            sessions = session_repository or SQLiteSessionRepository(
+                settings.database_url,
+                retention_days=settings.session_retention_days,
+            )
+
+        with recorder.phase("providers"):
+            active_providers = providers or _build_providers(settings)
+
+        with recorder.phase("agent"):
+            agent = AgentOrchestrator(recommender, sessions, active_providers, settings)
+
+        with recorder.phase("entity_resolver"):
+            resolver = recommender.entity_resolver
+
+        built = AppContainer(
             settings=settings,
             recommender=recommender,
             recommendations=RecommendationService(
@@ -142,13 +165,38 @@ def create_app(
                 ),
             ),
             sessions=sessions,
-            entity_resolver=recommender.entity_resolver,
+            entity_resolver=resolver,
             agent=agent,
         )
-        sessions.cleanup_expired()
+
+        with recorder.phase("session_cleanup"):
+            sessions.cleanup_expired()
+
+        return built
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Start initialization and return. Uvicorn binds the socket as soon as
+        # this yields, so the platform's connect check succeeds in under a
+        # second instead of waiting out the whole model load.
+        startup = ApplicationStartup(
+            build_container,
+            grace_seconds=settings.startup_warm_grace_seconds,
+            on_ready=lambda built: setattr(app.state, "container", built),
+        )
+        app.state.startup = startup
+        app.state.container = None
+        startup.start()
+
         cleanup_stop = asyncio.Event()
 
         async def cleanup_sessions() -> None:
+            # The session store does not exist until initialization finishes,
+            # so this waits for it rather than reaching into a half-built
+            # container.
+            if await startup.wait_for_ready() != "ready":
+                return
+            sessions = startup.container.sessions
             while not cleanup_stop.is_set():
                 try:
                     await asyncio.wait_for(
@@ -162,16 +210,19 @@ def create_app(
 
         cleanup_task = asyncio.create_task(cleanup_sessions(), name="anime-compass-session-cleanup")
         logger.info(
-            "application_started",
-            extra={"context": {"catalog_count": len(loaded_catalog), "llm_provider": settings.llm_provider}},
+            "http_server_ready",
+            extra={"context": {"llm_provider": settings.llm_provider, "initialization": "background"}},
         )
         try:
             yield
         finally:
             cleanup_stop.set()
             await cleanup_task
-            await agent.close()
-            sessions.engine.dispose()
+            await startup.close()
+            built = startup.container
+            if built is not None:
+                await built.agent.close()
+                built.sessions.engine.dispose()
 
     app = FastAPI(
         title="Anime Compass API",

@@ -5,7 +5,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.dependencies import container
+from app.api.dependencies import container, startup
 from app.api.schemas import (
     ChatRequest,
     ChatResponse,
@@ -23,6 +23,7 @@ from app.core.errors import AppError
 
 router = APIRouter(prefix="/api")
 Container = Annotated[Any, Depends(container)]
+Startup = Annotated[Any, Depends(startup)]
 SessionId = Annotated[
     str,
     Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
@@ -177,7 +178,28 @@ async def model_info(state: Container) -> dict[str, Any]:
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health(state: Container) -> dict[str, Any]:
+async def health(init: Startup) -> dict[str, Any]:
+    # Liveness, not readiness: this answers as soon as the HTTP server is up and
+    # never waits for a model. A platform that cannot tell "still loading" from
+    # "broken" restarts a container that was about to finish.
+    if init.state != "ready":
+        failed = init.state == "failed"
+        return {
+            "ok": not failed,
+            "status": "unhealthy" if failed else "degraded",
+            "components": {
+                "api": {"status": "healthy", "detail": "FastAPI request handling is available"},
+                "initialization": {
+                    "status": "unavailable" if failed else "degraded",
+                    "detail": init.error or "loading catalog and models",
+                },
+            },
+            "catalog": {"count": 0},
+            "ranking": {},
+            "agent": {"provider": "unavailable", "model": None, "available": False, "providers": {}},
+        }
+
+    state = init.container
     provider_health = await state.agent.health()
     provider_order = state.agent._provider_order()
     selected = next(
@@ -261,9 +283,35 @@ async def health(state: Container) -> dict[str, Any]:
 
 
 @router.get("/ready", include_in_schema=False)
-async def readiness(state: Container) -> dict[str, Any]:
+async def readiness(init: Startup) -> dict[str, Any]:
+    """Whether this instance can actually serve recommendations.
+
+    Distinct from /health on purpose. The server answers long before the
+    recommender exists, so readiness reports the initialization job's outcome
+    and then re-checks the dependencies serving genuinely needs -- a catalog and
+    a reachable session store -- rather than trusting that the job said so.
+    """
+    if init.state == "failed":
+        raise AppError(
+            init.error or "Application initialization failed",
+            code="initialization_failed",
+            status_code=503,
+        )
+    if init.state != "ready":
+        raise AppError(
+            "Application is still loading its models",
+            code="service_warming",
+            status_code=503,
+        )
+
+    state = init.container
     database_ok = await asyncio.to_thread(state.sessions.health)
     catalog_ok = bool(state.recommender.catalog)
     if not (database_ok and catalog_ok):
         raise AppError("Application is not ready", code="not_ready", status_code=503)
-    return {"status": "ready", "catalog_count": len(state.recommender.catalog), "database": "healthy"}
+    return {
+        "status": "ready",
+        "catalog_count": len(state.recommender.catalog),
+        "database": "healthy",
+        "initialization": init.status(),
+    }

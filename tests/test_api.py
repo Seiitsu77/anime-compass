@@ -10,6 +10,7 @@ from app.agents.schemas import AgentIntent, ProviderHealth
 from app.core.config import Settings
 from app.core.errors import ProviderUnavailable
 from app.main import create_app
+from tests.conftest import wait_until_ready
 
 
 class MockProvider:
@@ -213,6 +214,9 @@ def test_both_providers_unavailable_use_rule_fallback(tmp_path: Path, catalog: l
 
 def test_health_reports_each_optional_provider(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
     with app_client(tmp_path, catalog) as client:
+        # /api/health answers before the models load, by design; this asserts on
+        # the loaded report, so it waits for readiness first.
+        wait_until_ready(client)
         response = client.get("/api/health")
     components = response.json()["components"]
     assert response.status_code == 200

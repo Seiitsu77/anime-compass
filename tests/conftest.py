@@ -58,6 +58,49 @@ def anime(
     }
 
 
+def wait_until_ready(client, timeout: float = 60.0) -> None:
+    """Block until the application has finished initializing.
+
+    /api/health is a liveness probe: it answers as soon as the server is up and
+    deliberately does not wait for models, because an orchestrator that waits
+    on a probe kills the container it is waiting for. A test asserting on the
+    fully-loaded component report therefore has to establish that state itself
+    rather than assume it, which readiness -- not liveness -- is what reports.
+    """
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        if client.get("/api/ready").status_code == 200:
+            return
+        _time.sleep(0.05)
+    raise AssertionError("application did not become ready in time")
+
+
+@pytest.fixture(autouse=True)
+def wait_out_startup(monkeypatch):
+    """Let tests see a fully initialized application.
+
+    Initialization moved off the ASGI startup path so the server can bind
+    before the models are loaded, which means a request can now arrive while
+    the container is still being built and be answered with 503
+    service_warming. That is the intended production behaviour, and
+    tests/test_startup_readiness.py covers it directly with a deliberately slow
+    build.
+
+    Everywhere else the subject is the built application, not the warm-up. A
+    generous grace makes each request wait on the one shared initialization
+    task instead of racing it, which is what these tests assumed when startup
+    was synchronous. It changes no production default: the grace only bounds
+    how long a caller waits before being told the service is warming.
+
+    The wait is real here rather than nominal because .env sets
+    EMBEDDING_PROVIDER=sentence_transformers, so the first application built in
+    a session loads MiniLM from disk and takes seconds.
+    """
+    monkeypatch.setenv("STARTUP_WARM_GRACE_SECONDS", "60")
+
+
 @pytest.fixture
 def catalog() -> list[dict[str, Any]]:
     values = [

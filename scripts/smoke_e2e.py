@@ -199,11 +199,48 @@ def case_7(base: str) -> dict[str, Any]:
     }
 
 
+def await_readiness(base: str, timeout: float) -> float:
+    """Wait until the instance can actually serve, or give up saying so.
+
+    Initialization runs in the background now, so a freshly started instance
+    accepts connections within a second or two and answers 503 service_warming
+    for the half-minute it spends loading models. Without this the smoke test
+    reports seven failures against an instance that is merely young.
+    """
+    started = time.monotonic()
+    last = ""
+    while time.monotonic() - started < timeout:
+        try:
+            request = urllib.request.Request(f"{base}/api/ready", method="GET")
+            with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - operator-supplied base
+                if response.status == 200:
+                    return time.monotonic() - started
+        except urllib.error.HTTPError as exc:
+            last = f"HTTP {exc.code}"
+        except OSError as exc:
+            last = str(exc)
+        time.sleep(1.0)
+    raise Failure(f"instance did not become ready within {timeout:.0f}s ({last})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--with-agent", action="store_true", help="run the three LLM-backed cases")
+    parser.add_argument(
+        "--ready-timeout",
+        type=float,
+        default=180.0,
+        help="seconds to wait for the instance to finish initializing before testing",
+    )
     args = parser.parse_args()
+
+    try:
+        waited = await_readiness(args.base_url, args.ready_timeout)
+    except Failure as exc:
+        print(f"  FAIL  readiness: {exc}")
+        return 1
+    print(f"  READY after {waited:.1f}s")
 
     cases = [
         ("1 basic personalization", case_1, False),

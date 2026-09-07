@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     rate_limit_max_clients: int = Field(default=10_000, ge=100, le=1_000_000)
     session_cleanup_interval_seconds: int = Field(default=3600, ge=60, le=86_400)
+    # How long a request will wait on a cold start before answering 503
+    # service_warming. Initialization runs in the background, so this only
+    # bounds how long a caller is willing to sit behind it; it never makes
+    # the work happen twice.
+    startup_warm_grace_seconds: float = Field(default=2.0, ge=0.0, le=60.0)
     max_conversation_history: int = Field(default=12, ge=0, le=40)
     # Bounded deterministic constraint relaxation when a catalog request is
     # over-constrained. Zero disables replanning entirely.
