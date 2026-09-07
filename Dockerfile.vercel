@@ -13,8 +13,90 @@
 #
 # FastAPI still serves `frontend/` at `/`, so the browser sees one origin and
 # needs no CORS and no separate frontend deployment.
+#
+# ---------------------------------------------------------------------------
+# Why this is a multi-stage build
+#
+# The registry rejects any single compressed layer over 500 MB. Installing the
+# dependencies in one step produced one layer of roughly 665 MB compressed and
+# the push failed with 413 PAYLOAD_TOO_LARGE. Total image size was never the
+# problem; the distribution of bytes across layers was.
+#
+# Putting torch in a layer of its own is not enough either. Measured from
+# torch-2.14.0-cp312-cp312-manylinux_2_28_x86_64.whl, which is 554.6 MB
+# compressed and 1144.2 MB unpacked:
+#
+#     torch/lib/libtorch_cuda.so          356.0 MB compressed
+#     torch/lib/libtorch_cpu.so           120.8 MB compressed
+#     torch/lib/libtorch_cuda_linalg.so    34.7 MB compressed
+#     torch/lib/ as a whole               526.4 MB compressed   <- over on its own
+#
+# So the split has to cut inside torch. pip cannot do that, and a second COPY
+# of a path already copied would keep both bytes rather than replacing them.
+# The build stage below therefore partitions the installed tree into disjoint
+# directories, and the final stage copies each one separately. Nothing is
+# duplicated because no file appears in two partitions, and the build stage
+# itself is discarded rather than pushed.
+#
+# Approximate compressed size of each pushed dependency layer:
+#
+#     1  torch/lib/libtorch_cuda.so       ~356 MB
+#     2  torch/lib/libtorch_cpu.so        ~121 MB
+#     3  rest of torch                     ~78 MB
+#     4  numpy, scipy, scikit-learn, lightgbm  ~65 MB
+#     5  remaining web dependencies        ~45 MB
+#
+# Versions are untouched: the same `pip install -r requirements-web.txt`
+# resolves them, and the files are only relocated afterwards.
+#
+# The largest layer is CUDA code that cannot run here -- the function has no
+# GPU and EMBEDDING_DEVICE is cpu. Installing torch from the CPU-only index
+# would remove roughly 395 MB of it, but that is a different wheel rather than
+# a different layout, so it is deliberately not done here.
+# ---------------------------------------------------------------------------
 
-FROM python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
+
+# --------------------------------------------------------------- build stage
+FROM ${PYTHON_IMAGE} AS deps
+
+# Redirects `pip install --user` here, so the installed tree is at a known
+# path this stage can partition.
+ENV PYTHONUSERBASE=/pkgs \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /src
+COPY requirements-api.txt requirements-embeddings.txt requirements-web.txt ./
+RUN pip install --no-cache-dir --user -r requirements-web.txt
+
+# Partition the installed tree into disjoint directories, each shaped like a
+# PYTHONUSERBASE so the final stage can copy them straight into ~/.local.
+# Moves, not copies: a file lands in exactly one partition.
+RUN set -eu; \
+    SP="lib/python3.12/site-packages"; \
+    SRC="/pkgs/${SP}"; \
+    for n in 1 2 3 4 5; do mkdir -p "/layers/${n}/${SP}"; done; \
+    mkdir -p "/layers/1/${SP}/torch/lib" "/layers/2/${SP}/torch/lib"; \
+    mv "${SRC}/torch/lib/libtorch_cuda.so" "/layers/1/${SP}/torch/lib/"; \
+    mv "${SRC}/torch/lib/libtorch_cpu.so"  "/layers/2/${SP}/torch/lib/"; \
+    mv "${SRC}/torch" "/layers/3/${SP}/"; \
+    for d in "${SRC}"/torch-*.dist-info "${SRC}"/functorch "${SRC}"/torchgen "${SRC}"/nvidia; do \
+        if [ -e "${d}" ]; then mv "${d}" "/layers/3/${SP}/"; fi; \
+    done; \
+    for d in "${SRC}"/numpy* "${SRC}"/scipy* "${SRC}"/sklearn* "${SRC}"/scikit_learn* \
+             "${SRC}"/lightgbm* "${SRC}"/joblib* "${SRC}"/threadpoolctl*; do \
+        if [ -e "${d}" ]; then mv "${d}" "/layers/4/${SP}/"; fi; \
+    done; \
+    find "${SRC}" -mindepth 1 -maxdepth 1 -exec mv -t "/layers/5/${SP}/" {} +; \
+    if [ -d /pkgs/bin ]; then cp -a /pkgs/bin "/layers/5/bin"; fi; \
+    remaining="$(find "${SRC}" -mindepth 1 | wc -l)"; \
+    if [ "${remaining}" -ne 0 ]; then \
+        echo "partition left ${remaining} path(s) behind:"; find "${SRC}" -mindepth 1; exit 1; \
+    fi; \
+    du -sh /layers/*
+
+# --------------------------------------------------------------- final stage
+FROM ${PYTHON_IMAGE}
 
 # Pinned by revision, not by tag: the embedding matrix in the artifact repo was
 # produced by exactly this model, and a silently newer revision would put the
@@ -46,21 +128,28 @@ ENV HOME=/home/user \
 USER user
 WORKDIR $HOME/app
 
-# Layers are ordered so that editing application code rebuilds only the last
-# one. Dependencies, model weights and artifacts are ~1.7 GB between them and
-# change far less often than the source does.
+# 1-5. Dependencies, one layer each. `/home/user/.local` is the default user
+#      site directory, so these land on sys.path with no further configuration.
+COPY --from=deps --chown=user:user /layers/1/ /home/user/.local/
+COPY --from=deps --chown=user:user /layers/2/ /home/user/.local/
+COPY --from=deps --chown=user:user /layers/3/ /home/user/.local/
+COPY --from=deps --chown=user:user /layers/4/ /home/user/.local/
+COPY --from=deps --chown=user:user /layers/5/ /home/user/.local/
 
-# 1. Dependencies. requirements-web.txt pulls in requirements-embeddings.txt,
-#    which pulls in requirements-api.txt, so all three have to be present.
+# 6. Prove the reassembled tree is a complete, consistent dependency closure.
+#    The install is expected to report everything already satisfied; it is here
+#    so that anything the partitioning missed is restored rather than failing
+#    later at import time. `pip check` then verifies the metadata agrees.
 COPY --chown=user requirements-api.txt requirements-embeddings.txt requirements-web.txt ./
-RUN pip install --no-cache-dir --user -r requirements-web.txt
+RUN pip install --no-cache-dir --user -r requirements-web.txt \
+ && pip check
 
-# 2. Model weights. EMBEDDING_LOCAL_FILES_ONLY makes the running container read
+# 7. Model weights. EMBEDDING_LOCAL_FILES_ONLY makes the running container read
 #    this cache and never reach the network, so if this step were missing the
 #    application would fail at startup rather than quietly downloading.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}', revision='${EMBEDDING_MODEL_REVISION}', device='cpu', trust_remote_code=False)"
 
-# 3. Runtime artifacts, checksum-verified against data/artifacts.manifest.json.
+# 8. Runtime artifacts, checksum-verified against data/artifacts.manifest.json.
 #    Only the manifest and the downloader are copied here, so a change anywhere
 #    else in the tree does not re-download 192 MB.
 #
@@ -74,7 +163,7 @@ RUN python scripts/download_artifacts.py \
         --repo-id "${HF_DATASET_REPO}" \
         --revision "${HF_DATASET_REVISION}"
 
-# 4. Application source, including frontend/ which FastAPI mounts at /.
+# 9. Application source, including frontend/ which FastAPI mounts at /.
 COPY --chown=user . .
 
 # Documentation only: Vercel injects $PORT and the CMD below honours it.
