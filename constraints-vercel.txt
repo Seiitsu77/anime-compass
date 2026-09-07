@@ -1,15 +1,25 @@
-# Container-only constraint: the CPU build of PyTorch, and nothing else.
+# Container-only constraints, applied with `-c` to every pip install in
+# Dockerfile.vercel. Three pins, for two different reasons.
 #
-# Applied with `-c` to every pip install in Dockerfile.vercel. Passing it to a
-# later install is what stops that install from silently swapping the CPU wheel
-# for the default PyPI one -- pip resolves `torch` transitively through
-# sentence-transformers, and without this pin the second install would satisfy
-# that by pulling the CUDA build and its ~5 GB of NVIDIA dependencies back in.
+# torch: the CPU build. Passing this to a later install is what stops that
+# install from silently swapping it for the default PyPI wheel -- pip resolves
+# `torch` transitively through sentence-transformers, and without the pin that
+# would be satisfied by the CUDA build and its ~4.9 GB of NVIDIA dependencies,
+# which is what filled the build workspace. The pin is deliberately
+# unsatisfiable from PyPI: only the PyTorch CPU index publishes a `+cpu` local
+# version, so an install that tries to take torch from anywhere else fails
+# loudly rather than quietly reintroducing CUDA.
 #
-# The pin is deliberately unsatisfiable from PyPI: only the PyTorch CPU index
-# publishes a `+cpu` local version. An install that tries to take torch from
-# anywhere else therefore fails loudly instead of quietly reintroducing CUDA.
+# sentence-transformers and transformers: the versions the last real Vercel
+# build resolved. They are pinned only so that the image keeps resolving them.
+# requirements-embeddings.txt asks for `sentence-transformers>=5.0,<6`, which
+# permits the whole 5.x line and would drift on any later rebuild; a major
+# version is not what this deployment was verified against. The one intentional
+# dependency change in this image is torch 2.14.0 -> 2.14.0+cpu, and these two
+# pins are what keep it the only one.
 #
-# Same public version as the default build (2.14.0), different binary
-# distribution. Nothing outside the container image reads this file.
+# Nothing outside the container image reads this file. requirements-web.txt and
+# the development and evaluation environments are untouched.
 torch==2.14.0+cpu
+sentence-transformers==5.7.0
+transformers==5.16.1

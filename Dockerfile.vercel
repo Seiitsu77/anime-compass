@@ -80,22 +80,37 @@ COPY --chown=user requirements-api.txt requirements-embeddings.txt requirements-
                   requirements-vercel.txt constraints-vercel.txt ./
 
 # 1. PyTorch, CPU build, in a layer of its own (~196 MB compressed).
-RUN pip install --no-cache-dir --user -r requirements-vercel.txt
+RUN pip install --no-cache-dir --user -c constraints-vercel.txt -r requirements-vercel.txt
 
 # 2. Everything else. The constraints file is what keeps step 1 intact:
 #    sentence-transformers depends on torch, and without the pin this install
 #    would happily satisfy that from PyPI and drag the whole CUDA stack back
 #    in. The pin is unsatisfiable anywhere but the PyTorch CPU index, so that
-#    substitution fails the build instead of happening silently.
+#    substitution fails the build instead of happening silently. The same file
+#    holds sentence-transformers and transformers to the versions the last real
+#    build resolved, so `>=5.0,<6` cannot drift onto a 5.x this deployment was
+#    never verified against.
 RUN pip install --no-cache-dir --user -c constraints-vercel.txt \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         -r requirements-web.txt
 
-# 3. Prove the result rather than trusting it. `pip check` verifies the
-#    dependency closure is complete and consistent; the rest fails the build if
-#    a CUDA-enabled torch or any NVIDIA/Triton package got in by any route.
+# 3. Prove the result rather than trusting it, and print it so a build log is
+#    enough to tell what shipped. `pip check` verifies the dependency closure is
+#    complete and consistent; the assertions fail the build if a CUDA-enabled
+#    torch, an unexpected version, or any NVIDIA/Triton package got in by any
+#    route.
 RUN pip check \
- && python -c "import torch; print('torch.__version__ =', torch.__version__); print('torch.version.cuda =', torch.version.cuda); print('torch.cuda.is_available() =', torch.cuda.is_available()); assert torch.version.cuda is None, 'CUDA-enabled torch in a CPU-only image'; assert not torch.cuda.is_available(), 'CUDA runtime visible in a CPU-only image'; assert torch.__version__.startswith('2.14.0'), torch.__version__" \
+ && python -c "import torch, sentence_transformers, transformers; \
+print('torch.__version__               =', torch.__version__); \
+print('torch.version.cuda              =', torch.version.cuda); \
+print('torch.cuda.is_available()       =', torch.cuda.is_available()); \
+print('sentence_transformers.__version__ =', sentence_transformers.__version__); \
+print('transformers.__version__        =', transformers.__version__); \
+assert torch.__version__ == '2.14.0+cpu', torch.__version__; \
+assert torch.version.cuda is None, torch.version.cuda; \
+assert not torch.cuda.is_available(), 'CUDA runtime visible in a CPU-only image'; \
+assert sentence_transformers.__version__ == '5.7.0', sentence_transformers.__version__; \
+assert transformers.__version__ == '5.16.1', transformers.__version__" \
  && if pip list --format=freeze | grep -Eiq '^(nvidia-|triton|cuda-)'; then \
         echo 'CUDA packages present in a CPU-only image:'; \
         pip list --format=freeze | grep -Ei '^(nvidia-|triton|cuda-)'; \
