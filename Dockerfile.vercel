@@ -152,11 +152,23 @@ RUN set -eu; \
     echo "[build] interpreter resolved to ${PYBIN}"; \
     test -x "${PYBIN}"; \
     printf '%s' "${PYBIN}" > /home/user/.python-bin; \
+    SITEDIR="$(python -c 'import os, fastapi; print(os.path.dirname(os.path.dirname(os.path.abspath(fastapi.__file__))))')"; \
+    echo "[build] site-packages resolved to ${SITEDIR}"; \
+    test -d "${SITEDIR}"; \
+    test -d "${SITEDIR}/torch"; \
+    printf '%s' "${SITEDIR}" > /home/user/.python-site; \
     sed -e "s|__PYTHON_BIN__|${PYBIN}|" -e "s|__APP_DIR__|${HOME}/app|" \
+        -e "s|__SITE_PACKAGES__|${SITEDIR}|" \
         scripts/vercel_start.sh > /home/user/vercel_start.sh; \
     chmod +x /home/user/vercel_start.sh; \
     /bin/sh -n /home/user/vercel_start.sh; \
-    grep -E '^(PY|APP_DIR)=' /home/user/vercel_start.sh; \
+    grep -E '^(PY|APP_DIR|SITE_PACKAGES)=' /home/user/vercel_start.sh; \
+    if grep -q '__[A-Z_]*__' /home/user/vercel_start.sh; then \
+        echo '[build] FATAL: unsubstituted placeholder in launcher'; \
+        grep -n '__[A-Z_]*__' /home/user/vercel_start.sh; \
+        exit 1; \
+    fi; \
+    env -i "${PYBIN}" -c "import sys; sys.path.insert(0, '${SITEDIR}'); import fastapi, numpy, lightgbm, sentence_transformers, torch; print('[build] dependencies importable with HOME unset')"; \
     printf '%s\n' \
         'import os, urllib.request' \
         'port = os.environ.get("PORT", "80")' \

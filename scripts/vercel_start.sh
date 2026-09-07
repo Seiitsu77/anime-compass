@@ -40,6 +40,24 @@ if [ ! -d "${APP_DIR}" ]; then
 fi
 cd "${APP_DIR}"
 
+# Dependencies were installed with `pip install --user`, so they live in the
+# user site directory. CPython works that directory out from HOME at startup
+# and only puts it on sys.path if it resolves to where the install actually
+# went. The wrapper that did not preserve PATH does not preserve HOME either,
+# so the interpreter came up without it and `import fastapi` failed before the
+# application was ever reached.
+#
+# SITE_PACKAGES is substituted during the build with the directory a package
+# was genuinely found in, not a guess, and naming it on PYTHONPATH makes the
+# import path independent of HOME.
+SITE_PACKAGES="__SITE_PACKAGES__"
+if [ -n "${PYTHONPATH:-}" ]; then
+    PYTHONPATH="${SITE_PACKAGES}:${PYTHONPATH}"
+else
+    PYTHONPATH="${SITE_PACKAGES}"
+fi
+export PYTHONPATH
+
 # Required at runtime: without these the application cannot serve at all.
 missing=""
 for required in \
@@ -72,6 +90,14 @@ do
 done
 
 echo "[BOOT] artifacts present"
+
+# Confirm the import path actually works before blaming the application for a
+# dependency problem. This is what turned "No module named 'fastapi'" from a
+# guess into a fact.
+if ! "${PY}" "${APP_DIR}/scripts/vercel_preflight.py" "${SITE_PACKAGES}"; then
+    echo "[BOOT] FATAL: runtime dependencies are not importable"
+    exit 1
+fi
 
 # Importing the app is cheap -- the expensive loading happens in the lifespan,
 # once uvicorn starts it -- so this costs little and turns an import failure
