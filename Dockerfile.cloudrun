@@ -1,0 +1,236 @@
+# Anime Compass on Google Cloud Run.
+#
+# Converged from Dockerfile.vercel -- the one image that has actually been
+# built and pushed by a real platform -- rather than written fresh, so Cloud
+# Run runs the same dependency stack, the same artifacts and the same launcher.
+# Only three things differ from that file:
+#
+#   1. PORT defaults to 8080. Cloud Run injects PORT for every instance, so the
+#      default only matters for a local `docker run`.
+#   2. EXPOSE documents 8080 instead of 80.
+#   3. Comments that described Vercel's entrypoint wrapper now say what those
+#      measures mean here.
+#
+# The requirements-vercel.txt, constraints-vercel.txt and vercel_start.sh names
+# are historical. Their contents are platform-neutral, and reusing them is what
+# keeps this image's dependency closure identical to the one already proven.
+#
+# Cloud Run behaviour this image relies on:
+#
+#   * /api/ready is the HTTP startup probe. The server binds within seconds
+#     while the recommender initializes in a background thread; the probe keeps
+#     traffic away until initialization has genuinely finished. Because Cloud
+#     Run allocates CPU while an instance is starting, it also keeps that CPU
+#     available to initialization instead of throttling it between requests.
+#   * /tmp is memory-backed, so the SQLite session store below counts against
+#     the instance memory limit -- part of why the service runs at 4 GiB.
+#   * Docker HEALTHCHECK is ignored by Cloud Run and kept only for local runs.
+#
+# No secret is baked in. GEMINI_API_KEY is injected at deploy time from Secret
+# Manager.
+#
+# ---------------------------------------------------------------------------
+# PyTorch here is the CPU build
+#
+# The default PyPI wheel carries a CUDA stack that this deployment can never
+# use: the function has no GPU and EMBEDDING_DEVICE is cpu. It is not a small
+# amount of dead weight. The first push failed at 413 PAYLOAD_TOO_LARGE, and
+# the attempt to fix that by splitting torch across layers then filled the
+# build workspace outright -- the partitions came to 6.3 GB and the build died
+# with "no space left on device" before it ever reached the registry.
+#
+# The cause is seven dependencies the wheel declares under
+# `platform_system == "Linux"`, which is why none of them appear in local
+# development on Windows or macOS: cuda-toolkit with eleven extras,
+# cuda-bindings, nvidia-cudnn-cu13, nvidia-cusparselt-cu13, nvidia-nccl-cu13,
+# nvidia-nvshmem-cu13 and triton.
+#
+# Installing the CPU build removes all of it, and with it the reason for the
+# layer surgery that used to live in this file:
+#
+#                        default wheel      CPU wheel
+#     compressed            554.6 MB         196.3 MB
+#     unpacked             1144.2 MB         715.5 MB
+#     CUDA dependencies            7                0
+#     largest member        356.0 MB          115.7 MB   (libtorch_cpu.so)
+#
+# No single layer is near the registry's 500 MB compressed limit any more, so
+# torch is installed in one step and everything else in another. The version is
+# unchanged: 2.14.0 in both cases, differing only in which binaries were built.
+# ---------------------------------------------------------------------------
+
+FROM python:3.12-slim
+
+# Pinned by revision, not by tag: the embedding matrix in the artifact repo was
+# produced by exactly this model, and a silently newer revision would put the
+# precomputed document vectors and the live query vectors in different spaces.
+ARG EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ARG EMBEDDING_MODEL_REVISION=1110a243fdf4706b3f48f1d95db1a4f5529b4d41
+ARG HF_DATASET_REPO=Seiitsu/anime-compass-data
+ARG HF_DATASET_REVISION=main
+
+RUN useradd -m -u 1000 user
+
+# LightGBM's native extension links against GNU OpenMP. python:3.12-slim does
+# not ship it, so `import lightgbm` fails with
+#
+#     OSError: libgomp.so.1: cannot open shared object file
+#
+# The pip wheel installs cleanly regardless -- nothing resolves the shared
+# object until the module is first imported -- which is why this surfaced in
+# the build's dependency preflight rather than at install time, and would
+# otherwise have surfaced as a silently unavailable reranker in production.
+#
+# This is the runtime stage: there is only one, so the library is present in
+# the image that actually runs rather than in a builder that gets discarded.
+# `ldconfig -p` afterwards is a real check, not decoration -- under `set -eu` a
+# grep that matches nothing fails the build.
+RUN set -eu; \
+    . /etc/os-release; \
+    echo "[build] base image: ${PRETTY_NAME}"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends libgomp1; \
+    rm -rf /var/lib/apt/lists/*; \
+    ldconfig -p | grep libgomp
+
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH \
+    APP_HOST=0.0.0.0 \
+    APP_PORT=8000 \
+    EMBEDDING_PROVIDER=sentence_transformers \
+    EMBEDDING_MODEL=${EMBEDDING_MODEL} \
+    EMBEDDING_MODEL_REVISION=${EMBEDDING_MODEL_REVISION} \
+    EMBEDDING_DIMENSIONS=384 \
+    EMBEDDING_DEVICE=cpu \
+    EMBEDDING_LOCAL_FILES_ONLY=true \
+    HF_DATASET_REPO=${HF_DATASET_REPO} \
+    HF_DATASET_REVISION=${HF_DATASET_REVISION} \
+    HF_HOME=/home/user/.cache/huggingface \
+    DATABASE_URL=sqlite:////tmp/anime_compass.db \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Cloud Run injects PORT for every instance and overrides this. The default
+# applies only to a local `docker run`, where nothing injects it.
+ENV PORT=8080
+
+USER user
+WORKDIR $HOME/app
+
+COPY --chown=user requirements-api.txt requirements-embeddings.txt requirements-web.txt \
+                  requirements-vercel.txt constraints-vercel.txt ./
+
+# 1. PyTorch, CPU build, in a layer of its own (~196 MB compressed).
+RUN pip install --no-cache-dir --user -c constraints-vercel.txt -r requirements-vercel.txt
+
+# 2. Everything else. The constraints file is what keeps step 1 intact:
+#    sentence-transformers depends on torch, and without the pin this install
+#    would happily satisfy that from PyPI and drag the whole CUDA stack back
+#    in. The pin is unsatisfiable anywhere but the PyTorch CPU index, so that
+#    substitution fails the build instead of happening silently. The same file
+#    holds sentence-transformers and transformers to the versions the last real
+#    build resolved, so `>=5.0,<6` cannot drift onto a 5.x this deployment was
+#    never verified against.
+RUN pip install --no-cache-dir --user -c constraints-vercel.txt \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        -r requirements-web.txt
+
+# 3. Prove the result rather than trusting it, and print it so a build log is
+#    enough to tell what shipped. `pip check` verifies the dependency closure is
+#    complete and consistent; the assertions fail the build if a CUDA-enabled
+#    torch, an unexpected version, or any NVIDIA/Triton package got in by any
+#    route.
+RUN pip check \
+ && python -c "import torch, sentence_transformers, transformers; \
+print('torch.__version__               =', torch.__version__); \
+print('torch.version.cuda              =', torch.version.cuda); \
+print('torch.cuda.is_available()       =', torch.cuda.is_available()); \
+print('sentence_transformers.__version__ =', sentence_transformers.__version__); \
+print('transformers.__version__        =', transformers.__version__); \
+assert torch.__version__ == '2.14.0+cpu', torch.__version__; \
+assert torch.version.cuda is None, torch.version.cuda; \
+assert not torch.cuda.is_available(), 'CUDA runtime visible in a CPU-only image'; \
+assert sentence_transformers.__version__ == '5.7.0', sentence_transformers.__version__; \
+assert transformers.__version__ == '5.16.1', transformers.__version__" \
+ && if pip list --format=freeze | grep -Eiq '^(nvidia-|triton|cuda-)'; then \
+        echo 'CUDA packages present in a CPU-only image:'; \
+        pip list --format=freeze | grep -Ei '^(nvidia-|triton|cuda-)'; \
+        exit 1; \
+    else \
+        echo 'no NVIDIA, CUDA or Triton packages installed'; \
+    fi \
+ && du -sh /home/user/.local
+
+# 4. Model weights. EMBEDDING_LOCAL_FILES_ONLY makes the running container read
+#    this cache and never reach the network, so if this step were missing the
+#    application would fail at startup rather than quietly downloading.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}', revision='${EMBEDDING_MODEL_REVISION}', device='cpu', trust_remote_code=False)"
+
+# 5. Runtime artifacts, checksum-verified against data/artifacts.manifest.json.
+#    Only the manifest and the downloader are copied here, so a change anywhere
+#    else in the tree does not re-download 192 MB.
+#
+#    `data/processed` is in .dockerignore, so these files exist only because
+#    this step created them. The application calls the same routine at startup;
+#    finding every file present and matching, it verifies and returns instead
+#    of downloading.
+COPY --chown=user data/artifacts.manifest.json data/artifacts.manifest.json
+COPY --chown=user scripts/download_artifacts.py scripts/download_artifacts.py
+RUN python scripts/download_artifacts.py \
+        --repo-id "${HF_DATASET_REPO}" \
+        --revision "${HF_DATASET_REVISION}"
+
+# 6. Application source, including frontend/ which FastAPI mounts at /.
+COPY --chown=user . .
+
+# 7. Build the launcher, resolving the interpreter from this image rather than
+#    assuming where it lives. This hardening came from Vercel, whose entrypoint
+#    wrapper dropped PATH and HOME. Cloud Run preserves the image environment,
+#    so here it is redundant rather than required -- but it is what reached
+#    "starting uvicorn" on a real platform, and the redundancy costs about a
+#    second. `sh -n` parses the result, turning a shell syntax error into a
+#    build failure instead of a silent exit at run time.
+RUN set -eu; \
+    PYBIN="$(python -c 'import sys; print(sys.executable)')"; \
+    echo "[build] interpreter resolved to ${PYBIN}"; \
+    test -x "${PYBIN}"; \
+    printf '%s' "${PYBIN}" > /home/user/.python-bin; \
+    SITEDIR="$(python -c 'import os, fastapi; print(os.path.dirname(os.path.dirname(os.path.abspath(fastapi.__file__))))')"; \
+    echo "[build] site-packages resolved to ${SITEDIR}"; \
+    test -d "${SITEDIR}"; \
+    test -d "${SITEDIR}/torch"; \
+    printf '%s' "${SITEDIR}" > /home/user/.python-site; \
+    sed -e "s|__PYTHON_BIN__|${PYBIN}|" -e "s|__APP_DIR__|${HOME}/app|" \
+        -e "s|__SITE_PACKAGES__|${SITEDIR}|" \
+        scripts/vercel_start.sh > /home/user/vercel_start.sh; \
+    chmod +x /home/user/vercel_start.sh; \
+    /bin/sh -n /home/user/vercel_start.sh; \
+    grep -E '^(PY|APP_DIR|SITE_PACKAGES)=' /home/user/vercel_start.sh; \
+    if grep -q '__[A-Z_]*__' /home/user/vercel_start.sh; then \
+        echo '[build] FATAL: unsubstituted placeholder in launcher'; \
+        grep -n '__[A-Z_]*__' /home/user/vercel_start.sh; \
+        exit 1; \
+    fi; \
+    env -i "${PYBIN}" -c "import sys; sys.path.insert(0, '${SITEDIR}'); import fastapi, numpy, lightgbm, sentence_transformers, torch; print('[build] dependencies importable with HOME unset')"; \
+    printf '%s\n' \
+        'import os, urllib.request' \
+        'port = os.environ.get("PORT", "80")' \
+        'urllib.request.urlopen("http://127.0.0.1:" + port + "/api/ready", timeout=3)' \
+        > /home/user/healthcheck.py; \
+    "${PYBIN}" -m py_compile /home/user/healthcheck.py
+
+# Documentation only: Cloud Run sends traffic to the port given at deploy time
+# (--port=8080) and injects it as PORT, which the launcher honours.
+EXPOSE 8080
+
+# Ignored by Cloud Run, which uses the /api/ready startup probe configured at
+# deploy time instead; kept for local `docker run`. Absolute interpreter path,
+# and a probe file rather than `-c`, so no quoting has to survive two shells.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD /bin/sh -c 'exec "$(cat /home/user/.python-bin)" /home/user/healthcheck.py' || exit 1
+
+# Absolute interpreter, absolute script. The launcher `exec`s uvicorn so it
+# becomes PID 1 and receives Cloud Run's SIGTERM directly when an instance is
+# scaled down -- without that the shell holds PID 1 and the shutdown grace
+# period ends in a kill rather than a drain.
+CMD ["/bin/sh", "/home/user/vercel_start.sh"]

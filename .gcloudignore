@@ -1,0 +1,76 @@
+# Files uploaded by `gcloud builds submit`. Uses .gitignore syntax, and once
+# this file exists gcloud stops consulting .gitignore -- so everything that must
+# stay local is listed here explicitly.
+#
+# Two rules shape it:
+#
+#   * Secrets never leave the machine. Because this file replaces .gitignore
+#     for uploads, .env has to be listed here explicitly; .dockerignore keeps it
+#     out of the image but not out of the Cloud Build source bucket.
+#   * Patterns are anchored with a leading slash wherever a name could recur
+#     deeper in the tree. Unanchored, `evaluation` would also drop
+#     backend/anime_agent/evaluation/, which serving imports.
+#
+# The build needs: Dockerfile.cloudrun, .dockerignore, requirements-*.txt,
+# constraints-vercel.txt, data/artifacts.manifest.json, app/, backend/,
+# frontend/, scripts/ and run_app.py. Serving artifacts are downloaded and
+# checksum-verified during the build, so the local data/processed/ is not.
+
+.gcloudignore
+
+# Version control and CI
+/.git/
+/.github/
+
+# Secrets, at any depth. secrets.toml is Streamlit's local secrets file; none
+# exists today, and this keeps one from being uploaded if it ever does.
+.env
+.env.*
+secrets.toml
+
+# Local environments and tooling
+/.venv/
+/venv/
+/*venv/
+/*-env/
+/.tools/
+/.claude/
+/.vscode/
+/.idea/
+
+# Python caches and test output. .pytest_tmp and .test-tmp* can be left in a
+# pending-delete state on Windows, where walking them fails with access denied;
+# excluding them keeps the upload from tripping over them.
+__pycache__/
+*.py[cod]
+*.egg-info/
+/.pytest_cache/
+/.ruff_cache/
+/.mypy_cache/
+/.pytest_tmp/
+/.test-tmp*/
+/.coverage
+/coverage.xml
+/htmlcov/
+/build/
+/dist/
+
+# Logs and OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# Not part of the runtime image; .dockerignore excludes them as well
+/tests/
+/docs/
+
+# Raw and intermediate data. Serving artifacts come from the Hugging Face
+# Dataset during the build; only their manifest is uploaded.
+/archive/
+/Anime Data/
+/html folder/
+/*.csv
+/data/raw/
+/data/processed/
+/data/evaluation/
+/data/*.db

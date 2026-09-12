@@ -1,0 +1,35 @@
+# Build the Cloud Run image and push it to Artifact Registry.
+#
+# Run by scripts/deploy_cloudrun.ps1 as:
+#
+#   gcloud builds submit . --config=cloudbuild.cloudrun.yaml \
+#     --substitutions=_IMAGE=us-central1-docker.pkg.dev/PROJECT/anime-compass/anime-compass:SHA
+#
+# _IMAGE deliberately has no default. Cloud Build refuses a config that uses a
+# substitution nobody supplied, so a build started without an image name fails
+# at submission instead of pushing somewhere unintended.
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=Dockerfile.cloudrun
+      - --tag=${_IMAGE}
+      - .
+
+# Listed here rather than pushed from a step, so Cloud Build pushes only after
+# every step has succeeded and records the pushed digest in the build result.
+images:
+  - ${_IMAGE}
+
+options:
+  # Build logs go to Cloud Logging only. Builds that run as the Compute Engine
+  # default service account often cannot write to the legacy logs bucket, and
+  # that failure only surfaces after the build has already run.
+  logging: CLOUD_LOGGING_ONLY
+
+# Dependency install, model download, the 192 MB artifact download and the
+# import checks take several minutes on the default builder; the ten-minute
+# default leaves too little margin.
+timeout: 2400s
