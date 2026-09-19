@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -10,6 +11,20 @@ from app.core.errors import ProviderUnavailable
 from .prompting import render_intent_prompt, render_response_prompt
 from .runtime_state import build_runtime_context, tool_observation_from_verified
 from .schemas import AgentIntent, ProviderHealth, ProviderParseContext
+
+# Google API keys look like this, and an upstream error message is the one
+# place an API might quote the credential back at us. Both the pattern and the
+# configured key itself are scrubbed before any detail leaves this module.
+_API_KEY_PATTERN = re.compile(r"AIza[0-9A-Za-z_\-]{10,}")
+_MAX_DETAIL_CHARS = 200
+
+
+def _sanitize(text: str, secret: str | None) -> str:
+    """An upstream string, safe to log: no credentials, one line, bounded."""
+    cleaned = _API_KEY_PATTERN.sub("[REDACTED]", text)
+    if secret and len(secret) >= 8:
+        cleaned = cleaned.replace(secret, "[REDACTED]")
+    return " ".join(cleaned.split())[:_MAX_DETAIL_CHARS]
 
 
 class GeminiAgentProvider:
@@ -41,7 +56,11 @@ class GeminiAgentProvider:
         try:
             return AgentIntent.model_validate_json(content)
         except ValidationError as exc:
-            raise ProviderUnavailable(self.name, "Gemini returned invalid structured intent") from exc
+            raise ProviderUnavailable(
+                self.name,
+                "Gemini returned invalid structured intent",
+                diagnostics={"reason": "invalid_structured_intent"},
+            ) from exc
 
     async def generate_tool_response(self, user_message: str, verified_tool_data: dict[str, Any]) -> str:
         return await self._generate(
@@ -105,7 +124,11 @@ class GeminiAgentProvider:
         response_mime_type: str | None = None,
     ) -> str:
         if not self.api_key:
-            raise ProviderUnavailable(self.name, "Gemini API key is not configured")
+            raise ProviderUnavailable(
+                self.name,
+                "Gemini API key is not configured",
+                diagnostics={"reason": "api_key_not_configured"},
+            )
         generation_config: dict[str, Any] = {
             "temperature": 0.15,
             "maxOutputTokens": self.max_output_tokens,
@@ -131,12 +154,39 @@ class GeminiAgentProvider:
                 raise ValueError("empty Gemini response")
             return content
         except httpx.HTTPStatusError as exc:
+            # The status alone rarely identifies the cause -- 400 covers a bad
+            # key, a stale model name and a malformed schema alike -- so the
+            # upstream error code and message ride along, sanitized.
             raise ProviderUnavailable(
                 self.name,
                 f"Gemini returned HTTP {exc.response.status_code}",
+                diagnostics=self._response_diagnostics(exc.response),
             ) from exc
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderUnavailable(self.name, f"Gemini request failed: {type(exc).__name__}") from exc
+
+    def _response_diagnostics(self, response: httpx.Response) -> dict[str, Any]:
+        """Safe fields from a failed Gemini response.
+
+        Status code, and the `error` object Google returns -- code, status and
+        message. Nothing else: not the body, not the request, and above all not
+        the headers, which carry the key.
+        """
+        detail: dict[str, Any] = {"status_code": response.status_code}
+        try:
+            payload = response.json()
+        except (ValueError, TypeError):
+            return detail
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if not isinstance(error, dict):
+            return detail
+        if isinstance(error.get("code"), int):
+            detail["api_error_code"] = error["code"]
+        if isinstance(error.get("status"), str):
+            detail["api_error_status"] = _sanitize(error["status"], self.api_key)
+        if isinstance(error.get("message"), str):
+            detail["api_error_message"] = _sanitize(error["message"], self.api_key)
+        return detail
 
     def _headers(self) -> dict[str, str]:
         return {"Content-Type": "application/json", "x-goog-api-key": self.api_key or ""}

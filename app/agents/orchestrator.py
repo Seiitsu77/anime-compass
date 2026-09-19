@@ -21,6 +21,13 @@ from .tools import CatalogToolRegistry, ToolContractError, ValidatedToolCall
 
 logger = logging.getLogger("anime_compass.agent")
 
+# Only these keys are copied out of a provider exception into a log record. An
+# allowlist rather than a denylist: a provider that starts attaching something
+# sensitive cannot leak it by accident, it simply will not be logged.
+SAFE_PROVIDER_DIAGNOSTIC_KEYS = frozenset(
+    {"status_code", "api_error_code", "api_error_status", "api_error_message", "reason"}
+)
+
 
 class GroundingRejected(ValueError):
     """A provider answered, but the answer failed the grounding contract.
@@ -104,13 +111,17 @@ class AgentOrchestrator:
         intent = None
 
         parse_started = time.perf_counter()
-        for provider_name in self._provider_order():
+        intent_order = self._provider_order()
+        for position, provider_name in enumerate(intent_order):
             provider = self.providers.get(provider_name)
             if provider is None:
                 continue
             if not self._circuit_allows(provider_name):
                 provider_attempts.append({"phase": "intent", "provider": provider_name, "outcome": "circuit_open"})
+                self._log_attempt("intent", provider, skipped="circuit_open")
                 continue
+            self._log_attempt("intent", provider)
+            attempt_started = time.perf_counter()
             try:
                 agent_intent = await asyncio.wait_for(
                     provider.parse_intent(message, context),
@@ -120,6 +131,7 @@ class AgentOrchestrator:
                 selected_provider = provider
                 parser_mode = "structured_llm"
                 provider_attempts.append({"phase": "intent", "provider": provider_name, "outcome": "success"})
+                self._log_success("intent", provider, attempt_started)
                 break
             except Exception as exc:
                 error_type = type(exc).__name__
@@ -133,6 +145,13 @@ class AgentOrchestrator:
                         "error_type": error_type,
                         "error_detail": error_detail,
                     }
+                )
+                self._log_failure(
+                    "intent",
+                    provider,
+                    exc,
+                    attempt_started,
+                    failover_entered=self._has_remaining_provider(intent_order, position),
                 )
                 failed_providers.add(provider_name)
                 self._record_failure(provider_name)
@@ -191,7 +210,7 @@ class AgentOrchestrator:
                 "deterministic_fallback": response.get("answer", ""),
                 "runtime_context": runtime_context.as_prompt_payload(),
             }
-            for provider_name in generation_order:
+            for position, provider_name in enumerate(generation_order):
                 provider = self.providers.get(provider_name)
                 if provider is None:
                     continue
@@ -199,7 +218,10 @@ class AgentOrchestrator:
                     provider_attempts.append(
                         {"phase": "response", "provider": provider_name, "outcome": "circuit_open"}
                     )
+                    self._log_attempt("response", provider, skipped="circuit_open")
                     continue
+                self._log_attempt("response", provider)
+                attempt_started = time.perf_counter()
                 try:
                     candidate = await asyncio.wait_for(
                         provider.generate_tool_response(message, verified_data),
@@ -211,6 +233,7 @@ class AgentOrchestrator:
                     response["mode"] = f"{provider.name}_grounded"
                     response_provider = provider
                     provider_attempts.append({"phase": "response", "provider": provider_name, "outcome": "success"})
+                    self._log_success("response", provider, attempt_started)
                     self._record_success(provider_name)
                     break
                 except Exception as exc:
@@ -225,6 +248,18 @@ class AgentOrchestrator:
                             "error_type": error_type,
                             "error_detail": error_detail,
                         }
+                    )
+                    # A rejected grounding stops here by design, so no
+                    # failover follows even when another provider is free.
+                    self._log_failure(
+                        "response",
+                        provider,
+                        exc,
+                        attempt_started,
+                        failover_entered=(
+                            not isinstance(exc, GroundingRejected)
+                            and self._has_remaining_provider(generation_order, position)
+                        ),
                     )
                     failed_providers.add(provider_name)
                     if isinstance(exc, GroundingRejected):
@@ -295,6 +330,11 @@ class AgentOrchestrator:
             extra={
                 "context": {
                     "provider": selected_provider.name if selected_provider else "deterministic",
+                    # The mode is what a failure looks like from outside:
+                    # catalog_fallback means no provider produced a grounded
+                    # answer, whatever the reason.
+                    "mode": response.get("mode"),
+                    "response_provider": response_provider.name if response_provider else None,
                     "parser_mode": parser_mode,
                     "fallback_used": fallback_used,
                     "tool_names": [call.tool for call in validated_calls],
@@ -466,6 +506,59 @@ class AgentOrchestrator:
             content_key = content.casefold()
             return any(name.casefold() in content_key for name in names)
         return False
+
+    def _has_remaining_provider(self, order: list[str], position: int) -> bool:
+        """Is there another configured provider after this one to fail over to?"""
+        return any(self.providers.get(name) is not None for name in order[position + 1 :])
+
+    def _log_attempt(self, phase: str, provider: AgentProvider, *, skipped: str | None = None) -> None:
+        context: dict[str, Any] = {"phase": phase, "provider": provider.name, "model": provider.model}
+        if skipped is not None:
+            context["skipped"] = True
+            context["reason"] = skipped
+        logger.info("agent_provider_attempt", extra={"context": context})
+
+    def _log_success(self, phase: str, provider: AgentProvider, started: float) -> None:
+        logger.info(
+            "agent_provider_success",
+            extra={
+                "context": {
+                    "phase": phase,
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                }
+            },
+        )
+
+    def _log_failure(
+        self,
+        phase: str,
+        provider: AgentProvider,
+        exc: Exception,
+        started: float,
+        *,
+        failover_entered: bool,
+    ) -> None:
+        """Why one provider attempt failed, in terms a log reader can act on.
+
+        Until this existed, a provider failure was recorded only in a
+        debug-mode response body, so in production a fallback answer and a
+        provider that was never reached looked exactly alike.
+        """
+        context: dict[str, Any] = {
+            "phase": phase,
+            "provider": provider.name,
+            "model": provider.model,
+            "exception_class": type(exc).__name__,
+            "error_detail": self._safe_error_detail(exc),
+            "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+            "failover_entered": failover_entered,
+        }
+        diagnostics = getattr(exc, "diagnostics", None)
+        if isinstance(diagnostics, dict):
+            context.update({k: v for k, v in diagnostics.items() if k in SAFE_PROVIDER_DIAGNOSTIC_KEYS})
+        logger.warning("agent_provider_failure", extra={"context": context})
 
     @staticmethod
     def _safe_error_detail(exc: Exception) -> str:
