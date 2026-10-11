@@ -231,13 +231,14 @@ async def test_a_failed_attempt_is_logged_with_the_reason(make_orchestrator, cap
 
 
 @pytest.mark.asyncio
-async def test_failover_is_recorded_when_another_provider_remains(make_orchestrator, captured):
-    orchestrator = make_orchestrator({"gemini": gemini_against(quota_response), "ollama": StubProvider("ollama")})
-    await orchestrator.respond("Recommend supernatural anime", history=[], session_id=None, debug=False)
+async def test_quota_failure_uses_catalog_without_another_llm(make_orchestrator, captured):
+    orchestrator = make_orchestrator({"gemini": gemini_against(quota_response)})
+    response = await orchestrator.respond("Recommend supernatural anime", history=[], session_id=None, debug=False)
 
     failure = next(f for f in captured.events("agent_provider_failure") if f["provider"] == "gemini")
-    assert failure["failover_entered"] is True
-    assert any(s["provider"] == "ollama" for s in captured.events("agent_provider_success"))
+    assert failure["failover_entered"] is False
+    assert not captured.events("agent_provider_success")
+    assert any(step["tool"] == "recommend_anime" and step["result"]["results"] for step in response["trace"])
 
 
 @pytest.mark.asyncio

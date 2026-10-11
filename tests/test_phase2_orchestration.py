@@ -4,14 +4,12 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastapi.testclient import TestClient
 
-from app.agents.ollama_provider import OllamaAgentProvider
 from app.agents.schemas import AgentIntent, ProviderHealth
 from app.core.config import Settings
 from app.core.errors import ProviderUnavailable
-from app.main import create_app
+from app.main import _build_providers, create_app
 
 
 class TrackingProvider:
@@ -72,36 +70,35 @@ def phase2_client(
     return TestClient(create_app(settings=settings, catalog=catalog, providers=providers))
 
 
-def test_response_generation_falls_back_to_alternate_provider(
+def test_response_generation_falls_back_to_catalog(
     tmp_path: Path,
     catalog: list[dict[str, Any]],
 ) -> None:
     gemini = TrackingProvider("gemini", response_failure=ProviderUnavailable("gemini"))
-    ollama = TrackingProvider("ollama")
-    with phase2_client(tmp_path, catalog, {"gemini": gemini, "ollama": ollama}) as client:
+    with phase2_client(tmp_path, catalog, {"gemini": gemini}) as client:
         response = client.post("/api/chat", json={"message": "Recommend two supernatural anime", "debug": True})
 
     body = response.json()
     assert response.status_code == 200
     assert body["debug"]["intent_provider"] == "gemini"
-    assert body["debug"]["response_provider"] == "ollama"
+    assert body["debug"]["response_provider"] is None
     assert body["debug"]["fallback_used"] is True
-    assert body["agent"]["provider"] == "ollama"
+    assert any(step["tool"] == "recommend_anime" and step["result"]["results"] for step in body["trace"])
     assert [attempt["outcome"] for attempt in body["debug"]["provider_attempts"]] == [
         "success",
         "failed",
-        "success",
     ]
 
 
-def test_timeout_uses_alternate_provider_for_intent(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
+def test_timeout_uses_catalog_rules_for_intent(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
     gemini = TrackingProvider("gemini", parse_failure=TimeoutError())
-    ollama = TrackingProvider("ollama")
-    with phase2_client(tmp_path, catalog, {"gemini": gemini, "ollama": ollama}) as client:
+    with phase2_client(tmp_path, catalog, {"gemini": gemini}) as client:
         response = client.post("/api/chat", json={"message": "Recommend two supernatural anime", "debug": True})
 
     body = response.json()
-    assert body["debug"]["intent_provider"] == "ollama"
+    assert body["debug"]["intent_provider"] is None
+    assert body["debug"]["parser_mode"] == "rule_fallback"
+    assert any(step["tool"] == "recommend_anime" and step["result"]["results"] for step in body["trace"])
     assert body["debug"]["provider_attempts"][0]["error_type"] == "TimeoutError"
     assert "Recommend two supernatural anime" not in str(body["debug"]["provider_errors"])
 
@@ -111,11 +108,10 @@ def test_circuit_opens_after_repeated_generation_failures(
     catalog: list[dict[str, Any]],
 ) -> None:
     gemini = TrackingProvider("gemini", response_failure=ProviderUnavailable("gemini"))
-    ollama = TrackingProvider("ollama")
     with phase2_client(
         tmp_path,
         catalog,
-        {"gemini": gemini, "ollama": ollama},
+        {"gemini": gemini},
         provider_failure_threshold=2,
         provider_cooldown_seconds=300,
     ) as client:
@@ -129,7 +125,8 @@ def test_circuit_opens_after_repeated_generation_failures(
         "provider": "gemini",
         "outcome": "circuit_open",
     }
-    assert third["debug"]["intent_provider"] == "ollama"
+    assert third["debug"]["intent_provider"] is None
+    assert any(step["tool"] == "recommend_anime" and step["result"]["results"] for step in third["trace"])
     assert gemini.parse_calls == 2
 
 
@@ -137,7 +134,7 @@ def test_provider_diagnostics_are_absent_without_debug(
     tmp_path: Path,
     catalog: list[dict[str, Any]],
 ) -> None:
-    providers = {"gemini": TrackingProvider("gemini"), "ollama": TrackingProvider("ollama")}
+    providers = {"gemini": TrackingProvider("gemini")}
     with phase2_client(tmp_path, catalog, providers) as client:
         body = client.post("/api/chat", json={"message": "Recommend two supernatural anime"}).json()
 
@@ -147,35 +144,16 @@ def test_provider_diagnostics_are_absent_without_debug(
     assert "fallback_used" not in body["agent"]
 
 
-def test_ollama_health_requires_configured_model() -> None:
-    def installed(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"models": [{"name": "qwen3:1.7b"}]})
+def test_default_provider_is_gemini_and_missing_key_needs_no_network() -> None:
+    async def check() -> ProviderHealth:
+        providers = _build_providers(Settings(_env_file=None))
+        assert set(providers) == {"gemini"}
+        try:
+            return await providers["gemini"].health_check()
+        finally:
+            await providers["gemini"].close()
 
-    def missing(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"models": [{"name": "other:latest"}]})
-
-    async def check() -> tuple[ProviderHealth, ProviderHealth]:
-        available_provider = OllamaAgentProvider(
-            base_url="http://ollama.invalid",
-            model="qwen3:1.7b",
-            timeout=2,
-            max_output_tokens=500,
-            transport=httpx.MockTransport(installed),
-        )
-        missing_provider = OllamaAgentProvider(
-            base_url="http://ollama.invalid",
-            model="qwen3:1.7b",
-            timeout=2,
-            max_output_tokens=500,
-            transport=httpx.MockTransport(missing),
-        )
-        available = await available_provider.health_check()
-        unavailable = await missing_provider.health_check()
-        await available_provider.close()
-        await missing_provider.close()
-        return available, unavailable
-
-    available, unavailable = asyncio.run(check())
-    assert available.available is True
+    unavailable = asyncio.run(check())
+    assert unavailable.provider == "gemini"
     assert unavailable.available is False
-    assert unavailable.detail == "Configured model is not installed"
+    assert unavailable.detail == "API key is not configured"

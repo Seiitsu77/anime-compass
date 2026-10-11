@@ -1,20 +1,7 @@
-"""Pre-import checks for the Vercel container function.
+"""Check production imports before starting the web server.
 
-The image installs its dependencies with `pip install --user`, which puts them
-in the *user site* directory. CPython derives that directory from HOME when it
-starts, and adds it to `sys.path` only if it resolves to the same place the
-install used. Vercel wraps the image's CMD in its own entrypoint and does not
-necessarily preserve the environment the image set -- PATH was the first
-casualty, HOME is the second -- so the interpreter came up without that
-directory on its path and `import fastapi` failed with the application never
-having been reached.
-
-The launcher now puts the directory on PYTHONPATH explicitly, using the path
-resolved during the build rather than a guess. This script reports whether that
-actually worked, and fails with the specific module name if it did not, so the
-next failure is a sentence rather than a silent exit.
-
-Runs before app.main is imported. Prints no environment variable values.
+The launcher supplies the resolved user site directory explicitly. Report
+import failures without secrets; validate heavyweight ML imports at build time.
 """
 
 from __future__ import annotations
@@ -23,13 +10,7 @@ import importlib
 import os
 import sys
 
-# Deliberately cheap. This used to import torch and sentence-transformers too,
-# which cost about six seconds before uvicorn could bind -- and binding fast is
-# now the whole point, since the platform gives the container roughly fifteen
-# seconds to accept a connection. The heavy stack is still proven importable,
-# but at build time under `env -i`, where its cost is paid once instead of on
-# every cold start. What remains here is the check that the import path itself
-# works, which is what actually broke.
+# Only check lightweight imports here; the image build verifies ML packages.
 REQUIRED_MODULES = (
     "fastapi",
     "numpy",

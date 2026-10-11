@@ -12,7 +12,7 @@
 #     backend/anime_agent/evaluation/, which serving imports.
 #
 # The build needs: Dockerfile.cloudrun, .dockerignore, requirements-*.txt,
-# constraints-vercel.txt, data/artifacts.manifest.json, app/, backend/,
+# constraints-container.txt, data/artifacts.manifest.json, app/, backend/,
 # frontend/, scripts/ and run_app.py. Serving artifacts are downloaded and
 # checksum-verified during the build, so the local data/processed/ is not.
 

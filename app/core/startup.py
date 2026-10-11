@@ -1,23 +1,7 @@
-"""Application initialization, moved off the ASGI startup path.
+"""Initialize catalog and models in one background worker.
 
-Vercel gives a container roughly fifteen seconds to accept a TCP connection.
-Loading the catalog, the embedding matrices, the CountSketch index, the ALS
-factors and the LambdaMART booster takes about half a minute on one vCPU, and
-all of it used to run inside the ASGI lifespan -- that is, before uvicorn began
-listening. The platform gave up before the socket existed:
-
-    Application initialization timed out. Error: could not connect to $PORT=80.
-    INFO: Started server process
-    INFO: Waiting for application startup.
-
-Uvicorn had started and was waiting for the lifespan to return. Nothing about
-that work is wrong or avoidable; it was simply in the way of the listen call.
-
-So the lifespan now starts exactly one background job and returns immediately.
-The job runs in a worker thread, because the work is synchronous and CPU-bound
-and scheduling it as a coroutine would block the event loop just as effectively
-as blocking the lifespan did. Readiness is reported honestly while it runs
-rather than by making the server unreachable.
+Health and readiness distinguish a loading instance from a failed one. Cloud
+Run uses readiness to keep user traffic away until the models can serve.
 """
 
 from __future__ import annotations

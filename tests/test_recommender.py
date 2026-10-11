@@ -282,7 +282,7 @@ def voice_actor_catalog() -> list[dict[str, object]]:
     return catalog
 
 
-class FakeOllamaClient:
+class FakeChatClient:
     model = "fake"
     base_url = "http://fake"
 
@@ -293,8 +293,8 @@ class FakeOllamaClient:
         return "This fake response intentionally ignores the catalog."
 
 
-class StructuredOllamaClient:
-    model = "fake-qwen"
+class StructuredChatClient:
+    model = "fake-chat"
     base_url = "http://fake"
 
     def __init__(self, *intents: dict[str, object]):
@@ -312,7 +312,7 @@ class StructuredOllamaClient:
         return "This controlled response intentionally fails final-answer validation."
 
 
-class OfflineOllamaClient:
+class CatalogOnlyTestClient:
     model = "offline"
     base_url = "http://offline"
 
@@ -632,7 +632,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_excludes_titles_rejected_from_previous_answer(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
         history = [
             {
                 "role": "user",
@@ -661,7 +661,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_respects_requested_recommendation_count(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
 
         response = agent.respond("Give me 4 anime like Space Quest.")
 
@@ -672,7 +672,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_routes_more_options_followup_through_catalog(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
         history = [
             {"role": "user", "content": "I like watching Space Quest. Give me 3 other anime."},
             {
@@ -689,7 +689,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_parses_min_score_followup(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
         history = [
             {
                 "role": "user",
@@ -709,7 +709,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_excludes_same_series_feedback(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
         history = [
             {"role": "user", "content": "Give me 5 school drama anime."},
             {
@@ -732,7 +732,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_handles_romance_typo_without_search_seed(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
 
         response = agent.respond("recommend 4 rommance anime")
 
@@ -743,7 +743,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_hard_excludes_negative_title_series_inside_request(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
 
         response = agent.respond("Recommend 5 Supernatural anime to me. But I don't want Death Note.")
 
@@ -758,7 +758,7 @@ class AnimeRecommenderTests(unittest.TestCase):
         store = SessionStore()
         agent = AnimeAgent(
             recommender,
-            client=FakeOllamaClient(),
+            client=FakeChatClient(),
             get_session_profile=store.get,
             update_session_preferences=store.update,
         )
@@ -786,7 +786,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_introduction_is_grounded_in_catalog_details(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
 
         response = agent.respond("Tell me about Space Quest.")
 
@@ -802,7 +802,7 @@ class AnimeRecommenderTests(unittest.TestCase):
         store = SessionStore()
         agent = AnimeAgent(
             recommender,
-            client=FakeOllamaClient(),
+            client=FakeChatClient(),
             get_session_profile=store.get,
             update_session_preferences=store.update,
         )
@@ -815,7 +815,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_parses_min_year_filter(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
 
         response = agent.respond("Give me 3 mystery anime from 2020 or later.")
 
@@ -825,7 +825,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_parses_max_episode_filter(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
 
         response = agent.respond("I only watch short series, 12 episodes or fewer. Recommend 4 mystery anime.")
 
@@ -835,7 +835,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_agent_enforces_one_per_series(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
 
         response = agent.respond("Recommend 3 anime like Space Quest. Only one title from each series.")
 
@@ -846,7 +846,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
     def test_one_per_series_preference_does_not_change_requested_limit(self) -> None:
         recommender = AnimeRecommender(CATALOG)
-        agent = AnimeAgent(recommender, client=FakeOllamaClient())
+        agent = AnimeAgent(recommender, client=FakeChatClient())
         history = [
             {"role": "user", "content": "recommend 7 romance anime"},
             {"role": "assistant", "content": "- Stage Hearts (TV, score 7.60): Romance."},
@@ -867,7 +867,7 @@ class AnimeRecommenderTests(unittest.TestCase):
 
 
 class StructuredIntentAndFlowTests(unittest.TestCase):
-    def test_controlled_qwen_paraphrases_validate_to_equivalent_intents(self) -> None:
+    def test_controlled_structured_paraphrases_validate_to_equivalent_intents(self) -> None:
         groups = [
             (
                 ("under 24 episodes", "no more than 24 episodes", "keep it below 24 episodes"),
@@ -905,33 +905,33 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
                     catalog = CATALOG
                     if "Mecha" in payload.get("exclude_genres", []):
                         catalog = [{**CATALOG[0], "genres": CATALOG[0]["genres"] + ["Mecha"]}] + CATALOG[1:]
-                    agent = AnimeAgent(AnimeRecommender(catalog), client=StructuredOllamaClient(payload))
+                    agent = AnimeAgent(AnimeRecommender(catalog), client=StructuredChatClient(payload))
                     intent, mode, error = agent._parse_intent(message, [], {})
-                    self.assertEqual(mode, "qwen_structured")
+                    self.assertEqual(mode, "structured_chat")
                     self.assertIsNone(error)
                     self.assertTrue(assertion(intent))
 
-    def test_qwen_structured_parser_is_primary_and_debuggable(self) -> None:
+    def test_structured_chat_parser_is_primary_and_debuggable(self) -> None:
         payload = {
             "intent": "recommend",
             "reference_titles": ["Death Note"],
             "free_text_preferences": "similar psychological atmosphere",
             "top_k": 3,
         }
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredChatClient(payload))
 
         response = agent.respond(
             "I enjoyed Death Note and want another show with a similar atmosphere.",
             debug=True,
         )
 
-        self.assertEqual(response["debug"]["parser_mode"], "qwen_structured")
+        self.assertEqual(response["debug"]["parser_mode"], "structured_chat")
         self.assertEqual(response["debug"]["validated_intent"]["intent"], "recommend")
         self.assertIn("Death Note", response["trace"][0]["arguments"]["reference_titles"])
         self.assertNotIn("validated_intent", response["answer"])
 
-    def test_malformed_qwen_output_uses_rule_fallback(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=FakeOllamaClient())
+    def test_malformed_chat_output_uses_rule_fallback(self) -> None:
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=FakeChatClient())
         response = agent.respond("Recommend 3 supernatural anime.", debug=True)
 
         self.assertEqual(response["debug"]["parser_mode"], "rule_fallback")
@@ -939,7 +939,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
 
     def test_structured_tool_failure_retries_with_rule_fallback(self) -> None:
         payload = {"intent": "recommend", "include_genres": ["Supernatural"], "top_k": 2}
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredChatClient(payload))
         original = agent._respond_from_intent
         calls = 0
 
@@ -957,15 +957,15 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
         self.assertIn("tool orchestration failed", response["debug"]["parser_error"].casefold())
         self.assertEqual(response["trace"][0]["tool"], "recommend_anime")
 
-    def test_offline_ollama_uses_rule_fallback_without_crashing(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=OfflineOllamaClient())
+    def test_catalog_only_uses_rule_fallback_without_crashing(self) -> None:
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=CatalogOnlyTestClient())
         response = agent.respond("Show me anime involving ghosts and spirits.", debug=True)
 
         self.assertEqual(response["debug"]["parser_mode"], "rule_fallback")
         self.assertEqual(response["trace"][0]["tool"], "recommend_anime")
 
     def test_rule_fallback_short_paraphrases_preserve_explicit_vs_inferred(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=OfflineOllamaClient())
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=CatalogOnlyTestClient())
         explicit = (
             "Recommend anime under 24 episodes",
             "Recommend anime with no more than 24 episodes",
@@ -989,7 +989,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
                 self.assertEqual(intent.inferred_constraints[0].field, "max_episodes")
 
     def test_rule_fallback_excluded_genre_paraphrases(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=OfflineOllamaClient())
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=CatalogOnlyTestClient())
         messages = (
             "Recommend anime with no mecha",
             "Recommend anime but avoid robot shows",
@@ -1002,7 +1002,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
                 self.assertIn("Mecha", intent.exclude_genres)
 
     def test_rule_fallback_similar_title_paraphrases(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=OfflineOllamaClient())
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=CatalogOnlyTestClient())
         messages = (
             "Recommend something like Death Note",
             "Recommend something similar to Death Note",
@@ -1016,7 +1016,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
                 self.assertIn("Death Note", intent.reference_titles)
 
     def test_rule_fallback_supernatural_paraphrases(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=OfflineOllamaClient())
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=CatalogOnlyTestClient())
         messages = (
             "Recommend supernatural anime",
             "Show me anime involving ghosts and spirits",
@@ -1029,7 +1029,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
                 self.assertIn("Supernatural", intent.include_genres)
 
     def test_rule_fallback_negative_feedback_paraphrases(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=OfflineOllamaClient())
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=CatalogOnlyTestClient())
         messages = (
             "I dislike this",
             "This was not for me",
@@ -1149,7 +1149,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
             ],
             "top_k": 7,
         }
-        agent = AnimeAgent(AnimeRecommender(voice_actor_catalog()), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(voice_actor_catalog()), client=StructuredChatClient(payload))
 
         response = agent.respond(
             "Recommend 7 anime that have the voice actor Missing Voice Actor involved.",
@@ -1183,7 +1183,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
         )
         agent = AnimeAgent(
             AnimeRecommender(voice_actor_catalog()),
-            client=StructuredOllamaClient(payload),
+            client=StructuredChatClient(payload),
             get_session_profile=store.get,
             update_session_preferences=store.update,
         )
@@ -1212,7 +1212,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
             ],
             "top_k": 7,
         }
-        agent = AnimeAgent(AnimeRecommender(voice_actor_catalog()), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(voice_actor_catalog()), client=StructuredChatClient(payload))
 
         response = agent.respond(
             "I really like a voice actor called Matsuoka, Yoshitsugu. Could you recommend 7 anime that have him involved?",
@@ -1228,7 +1228,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
         self.assertIn("Matsuoka, Yoshitsugu", response["answer"])
 
     def test_original_voice_actor_request_uses_hard_constraint_in_rule_fallback(self) -> None:
-        agent = AnimeAgent(AnimeRecommender(voice_actor_catalog()), client=OfflineOllamaClient())
+        agent = AnimeAgent(AnimeRecommender(voice_actor_catalog()), client=CatalogOnlyTestClient())
 
         response = agent.respond(
             "I really like a voice actor called Matsuoka, Yoshitsugu. Could you recommend 7 anime that have him involved?",
@@ -1250,7 +1250,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
             "exclude_related_series": True,
             "top_k": 10,
         }
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredChatClient(payload))
         response = agent.respond(
             "Recommend 10 supernatural anime, but do not include Death Note or anything from the same series.",
             debug=True,
@@ -1275,7 +1275,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
             ],
             "top_k": 3,
         }
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredChatClient(payload))
         response = agent.respond("I enjoyed Death Note but want something shorter and less famous.", debug=True)
         intent = response["debug"]["validated_intent"]
         result = response["trace"][0]["result"]["results"][0]
@@ -1290,7 +1290,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
         store = SessionStore()
         agent = AnimeAgent(
             AnimeRecommender(CATALOG),
-            client=OfflineOllamaClient(),
+            client=CatalogOnlyTestClient(),
             get_session_profile=store.get,
             update_session_preferences=store.update,
         )
@@ -1310,7 +1310,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
             "free_text_preferences": "anime involving ghosts and spirits",
             "top_k": 3,
         }
-        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(CATALOG), client=StructuredChatClient(payload))
         response = agent.respond("Show me anime involving ghosts and spirits.", debug=True)
         result = response["trace"][0]["result"]["results"][0]
 
@@ -1341,7 +1341,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
             "free_text_preferences": "works connected to this director",
             "top_k": 2,
         }
-        agent = AnimeAgent(AnimeRecommender(catalog), client=StructuredOllamaClient(payload))
+        agent = AnimeAgent(AnimeRecommender(catalog), client=StructuredChatClient(payload))
         response = agent.respond("I like the director of Monster.", debug=True)
 
         arguments = response["trace"][0]["arguments"]
@@ -1362,7 +1362,7 @@ class StructuredIntentAndFlowTests(unittest.TestCase):
         store = SessionStore()
         agent = AnimeAgent(
             AnimeRecommender(CATALOG),
-            client=StructuredOllamaClient(first, second),
+            client=StructuredChatClient(first, second),
             get_session_profile=store.get,
             update_session_preferences=store.update,
         )

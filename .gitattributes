@@ -2,6 +2,7 @@
 # corrupted a committed LightGBM booster once; these keep LF endings so a
 # checkout on any platform still loads.
 *.txt text eol=lf
+*.sh text eol=lf
 data/evaluation/personalized/results/**/*.txt -text
 *.npz binary
 *.gz binary

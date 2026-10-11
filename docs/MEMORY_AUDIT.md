@@ -168,9 +168,9 @@ The agent orchestrator stage adds 93.6 MiB, essentially all of it a second
 EntityResolver (section 12); the orchestrator's own state is negligible. LLM providers
 cost 1.8 MiB - thin HTTP clients.
 
-**Ollama runs as a separate OS process.** It contributes nothing to this process's RSS.
-Any Ollama model weights are outside every number in this report; a host sized from this
-audit still needs separate headroom if Ollama is co-located.
+**Historical local LLM measurements are excluded.** This audit measured the
+application process. The current deployment uses Gemini and no longer includes
+a separate local LLM service.
 
 ## 11. Steady-state request memory and leak detection
 

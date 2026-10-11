@@ -1,14 +1,4 @@
-"""Serving must not wait on model loading.
-
-Vercel gives a container roughly fifteen seconds to accept a TCP connection.
-Initialization takes about half a minute on one vCPU, and it used to run inside
-the ASGI lifespan -- so uvicorn logged "Waiting for application startup" and the
-platform gave up before the socket existed.
-
-The fix is architectural: the lifespan starts one background job and returns.
-That trades an unreachable server for a reachable one that is honest about not
-being ready yet, and these tests pin both halves of that trade.
-"""
+"""Health and readiness must answer while models load in the background."""
 
 from __future__ import annotations
 

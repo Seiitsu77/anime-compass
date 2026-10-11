@@ -1,5 +1,5 @@
 # Container-only constraints, applied with `-c` to every pip install in
-# Dockerfile.vercel. Three pins, for two different reasons.
+# Dockerfile.cloudrun. Three pins, for two different reasons.
 #
 # torch: the CPU build. Passing this to a later install is what stops that
 # install from silently swapping it for the default PyPI wheel -- pip resolves
@@ -10,7 +10,7 @@
 # version, so an install that tries to take torch from anywhere else fails
 # loudly rather than quietly reintroducing CUDA.
 #
-# sentence-transformers and transformers: the versions the last real Vercel
+# sentence-transformers and transformers: the versions the production container
 # build resolved. They are pinned only so that the image keeps resolving them.
 # requirements-embeddings.txt asks for `sentence-transformers>=5.0,<6`, which
 # permits the whole 5.x line and would drift on any later rebuild; a major

@@ -50,7 +50,7 @@ def app_client(tmp_path: Path, catalog: list[dict[str, Any]], **settings_overrid
         rate_limit_requests=1000,
         **settings_overrides,
     )
-    providers = {"gemini": MockProvider("gemini"), "ollama": MockProvider("ollama")}
+    providers = {"gemini": MockProvider("gemini")}
     return TestClient(create_app(settings=settings, catalog=catalog, providers=providers))
 
 
@@ -181,7 +181,7 @@ def test_session_path_rejects_invalid_identifiers(tmp_path: Path, catalog: list[
     assert oversized.status_code == 422
 
 
-def test_agent_falls_back_from_gemini_to_ollama(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
+def test_agent_falls_back_from_gemini_to_catalog(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
     settings = Settings(
         database_url=f"sqlite:///{(tmp_path / 'fallback.db').as_posix()}",
         llm_provider="gemini",
@@ -189,23 +189,50 @@ def test_agent_falls_back_from_gemini_to_ollama(tmp_path: Path, catalog: list[di
     )
     providers = {
         "gemini": MockProvider("gemini", failure=ProviderUnavailable("gemini")),
-        "ollama": MockProvider("ollama"),
     }
     with TestClient(create_app(settings=settings, catalog=catalog, providers=providers)) as client:
         response = client.post("/api/chat", json={"message": "Recommend two supernatural anime", "debug": True})
     body = response.json()
-    assert body["debug"]["llm_provider"] == "ollama"
+    assert body["debug"]["llm_provider"] is None
+    assert body["debug"]["parser_mode"] == "rule_fallback"
+    assert any(step["tool"] == "recommend_anime" and step["result"]["results"] for step in body["trace"])
     assert body["debug"]["fallback_used"] is True
     assert body["debug"]["tool_calls"] == ["recommend_anime"]
 
 
-def test_both_providers_unavailable_use_rule_fallback(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
+def test_als_recommendations_survive_gemini_failure(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
+    from tests.test_fast_path_integration import build_artifact
+
+    artifact = build_artifact(tmp_path / "als.npz", sorted(int(item["id"]) for item in catalog))
+    settings = Settings(
+        _env_file=None,
+        database_url=f"sqlite:///{(tmp_path / 'als-fallback.db').as_posix()}",
+        als_artifact_path=artifact,
+        collaborative_enabled=False,
+        routing_medium_threshold=1,
+        rate_limit_requests=1000,
+    )
+    providers = {"gemini": MockProvider("gemini", failure=ProviderUnavailable("gemini"))}
+    with TestClient(create_app(settings=settings, catalog=catalog, providers=providers)) as client:
+        chat = client.post("/api/chat", json={"message": "Recommend 2 supernatural anime", "debug": True})
+        recommendations = client.post("/api/recommend", json={"liked_ids": [1, 2], "limit": 3})
+
+    assert chat.status_code == 200
+    assert chat.json()["debug"]["parser_mode"] == "rule_fallback"
+    assert recommendations.status_code == 200
+    body = recommendations.json()
+    assert body["results"]
+    assert body["diagnostics"]["recommendation_path"] == "fast"
+    assert body["diagnostics"]["collaborative_route"] == "als"
+
+
+def test_gemini_unavailable_uses_rule_fallback(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
     settings = Settings(
         database_url=f"sqlite:///{(tmp_path / 'rules.db').as_posix()}",
         llm_provider="gemini",
         rate_limit_requests=1000,
     )
-    providers = {name: MockProvider(name, failure=ProviderUnavailable(name)) for name in ("gemini", "ollama")}
+    providers = {"gemini": MockProvider("gemini", failure=ProviderUnavailable("gemini"))}
     with TestClient(create_app(settings=settings, catalog=catalog, providers=providers)) as client:
         response = client.post("/api/chat", json={"message": "Recommend 2 supernatural anime", "debug": True})
     assert response.status_code == 200
@@ -223,7 +250,7 @@ def test_health_reports_each_optional_provider(tmp_path: Path, catalog: list[dic
     assert components["api"]["status"] == "healthy"
     assert components["database"]["status"] == "healthy"
     assert components["gemini"]["status"] == "healthy"
-    assert components["ollama"]["status"] == "healthy"
+    assert "ollama" not in components
 
 
 def test_rate_limit_and_body_limit(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
@@ -233,7 +260,7 @@ def test_rate_limit_and_body_limit(tmp_path: Path, catalog: list[dict[str, Any]]
         rate_limit_requests=1,
         max_request_body_bytes=1024,
     )
-    providers = {"gemini": MockProvider("gemini"), "ollama": MockProvider("ollama")}
+    providers = {"gemini": MockProvider("gemini")}
     with TestClient(create_app(settings=limited_settings, catalog=catalog, providers=providers)) as client:
         assert client.get("/api/meta").status_code == 200
         assert client.get("/api/meta").status_code == 429

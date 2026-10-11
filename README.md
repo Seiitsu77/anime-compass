@@ -10,7 +10,7 @@ including predeclared confirmation rules, and several promising ideas were measu
 
 | | |
 |---|---|
-| **Try Live App** | _deploy the FastAPI image and paste the URL here — see [Deployment](#deployment)_ |
+| **Try Live App** | https://anime-compass-b2c6mriqrq-uc.a.run.app/ |
 | **Technical Demo** | https://anime-compass-xijwv9hjuqvoskonhrwtus.streamlit.app/ |
 
 The **Live App** is the product: search titles, pick what you like, exclude what you don't, get personalized
@@ -155,8 +155,8 @@ Each had a predeclared decision rule. Reporting them is the point: the architect
 - **449 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
 - **Artifact integrity**: SHA-256 pinning, catalog-digest pinning, and role separation between the evaluation and
   production models. A catalog mismatch refuses startup rather than silently serving a stale model.
-- **NumPy-only serving on the default path.** No SciPy and no training code in the web process. The optional
-  learned reranker is the one exception and is off by default; enabling it adds LightGBM.
+- **Frozen model serving.** ALS fold-in uses NumPy; the promoted LambdaMART
+  reranker uses LightGBM. Training runs separately from the web process.
 - **Reproducibility**: dataset, split, catalog, and artifact hashes recorded for every published number.
 - Known limitation: the interaction snapshot ends in 2020, so this measures preference reconstruction rather
   than next-item prediction. There are no timestamps.
@@ -218,6 +218,12 @@ python scripts/build_serving_catalog.py
 ```
 
 ## Deployment
+
+The full web app runs on Google Cloud Run; the technical demo runs on Streamlit
+Community Cloud. See [Cloud Run deployment](docs/CLOUD_RUN_DEPLOYMENT.md) for the
+production image, pinned CPU dependencies, readiness probe and deployment script.
+Gemini is the only LLM provider. Catalog search and ranking and the personalized
+recommendation model remain available when Gemini is unavailable.
 
 Two deployments, from one repository.
 

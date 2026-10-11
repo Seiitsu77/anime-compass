@@ -16,7 +16,6 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.agents.gemini_provider import GeminiAgentProvider
-from app.agents.ollama_provider import OllamaAgentProvider
 from app.agents.orchestrator import AgentOrchestrator
 from app.api.routes import router
 from app.core.config import PROJECT_ROOT, Settings, get_settings
@@ -331,12 +330,6 @@ def _build_providers(settings: Settings) -> dict[str, Any]:
             api_key=secret,
             model=settings.gemini_model,
             base_url=settings.gemini_base_url,
-            timeout=settings.llm_timeout_seconds,
-            max_output_tokens=settings.llm_max_output_tokens,
-        ),
-        "ollama": OllamaAgentProvider(
-            base_url=settings.ollama_base_url,
-            model=settings.ollama_model,
             timeout=settings.llm_timeout_seconds,
             max_output_tokens=settings.llm_max_output_tokens,
         ),

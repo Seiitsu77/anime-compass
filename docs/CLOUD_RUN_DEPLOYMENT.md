@@ -1,7 +1,7 @@
 # Deploying to Google Cloud Run
 
 The production image is `Dockerfile.cloudrun`, built by Cloud Build and deployed
-by `scripts/deploy_cloudrun.ps1`. It converges from `Dockerfile.vercel`, so the
+by `scripts/deploy_cloudrun.ps1`. It uses the pinned CPU container dependencies, so the
 dependency stack is the one already proven: CPU-only `torch==2.14.0+cpu`,
 `sentence-transformers==5.7.0`, `transformers==5.16.1`, and `libgomp1` for
 LightGBM.
@@ -197,6 +197,13 @@ rollback target still uses it.
 - **Cold starts.** With `min-instances=0`, the first request after the service
   scales to zero waits while the catalog and models load, and `/api/ready`
   answers 503 `service_warming` until then.
+  One observed load on 2026-10-11 took 107.94s to receive the page; a subsequent
+  page request took 0.09s. The instance reported 93.98s of initialization,
+  including 51.29s for semantic embeddings and 18.23s for the recommender.
+  The CSS response took 0.11s; the frontend uses plain CSS, with no Tailwind
+  runtime. These are individual diagnostic observations, not latency percentiles.
+  Keeping a minimum instance warm can reduce this wait but introduces idle
+  billing; see [Cloud Run minimum instances](https://docs.cloud.google.com/run/docs/configuring/min-instances).
 - **Concurrency is 4.** An instance handles up to four requests at once, and with
   `max-instances=1` that is four across the whole service; further requests wait
   for a free slot and can be rejected if none frees up in time. The value is
@@ -211,6 +218,6 @@ rollback target still uses it.
   the 60 requests/minute limit can act as one global limit. Trusting
   `X-Forwarded-For` wholesale would let clients spoof their way past it, so this
   has deliberately not been changed.
-- **Provider order.** With `LLM_PROVIDER=gemini` the agent tries Gemini, then
-  Ollama, then the deterministic rule parser. Nothing listens for Ollama on Cloud
-  Run, so a Gemini failure falls through to the rule parser quickly.
+- **Gemini failure.** Gemini is the only LLM provider. If it fails, the agent
+  falls back to the deterministic catalog parser. Personalized recommendations
+  still use ALS and its available reranker without requiring text generation.

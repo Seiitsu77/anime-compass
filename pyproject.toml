@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "anime-compass"
 version = "0.1.0"
-description = "Local-first agentic anime discovery with an explainable hybrid recommender."
+description = "Personalized anime discovery with ALS ranking and a catalog-grounded Gemini agent."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

@@ -38,12 +38,10 @@ class Settings(BaseSettings):
     # over-constrained. Zero disables replanning entirely.
     max_replan_steps: int = Field(default=2, ge=0, le=5)
 
-    llm_provider: Literal["gemini", "ollama"] = "ollama"
+    llm_provider: Literal["gemini"] = "gemini"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.1-flash-lite"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "gemma3:12b"
     llm_timeout_seconds: float = Field(default=35.0, ge=1.0, le=120.0)
     llm_max_output_tokens: int = Field(default=1200, ge=128, le=8192)
     provider_failure_threshold: int = Field(default=3, ge=1, le=20)

@@ -180,7 +180,7 @@ def extract_json_object(content: str) -> dict[str, Any]:
             continue
         if isinstance(value, dict):
             return value
-    raise IntentValidationError("Qwen did not return one valid JSON object")
+    raise IntentValidationError("The model did not return one valid JSON object")
 
 
 def validate_structured_intent(

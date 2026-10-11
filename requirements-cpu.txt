@@ -1,4 +1,4 @@
-# PyTorch for the Vercel container image: CPU-only, same public version.
+# PyTorch for the production container image: CPU-only, same public version.
 #
 # The default PyPI wheel declares seven CUDA dependencies, all gated on
 # `platform_system == "Linux"`, so they appear only in the Linux image and not

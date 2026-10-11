@@ -10,7 +10,7 @@ from app.core.config import Settings
 from app.core.errors import ProviderUnavailable
 from app.repositories.session_repository import SQLiteSessionRepository
 from backend.anime_agent.agent import AnimeAgent
-from backend.anime_agent.ollama_client import OllamaUnavailable
+from backend.anime_agent.chat_client import CatalogOnlyClient
 from backend.anime_agent.recommender import AnimeRecommender
 
 from .base import AgentProvider
@@ -38,25 +38,6 @@ class GroundingRejected(ValueError):
     """
 
 
-class DeterministicClient:
-    """Stand-in provider for the legacy agent's deterministic paths.
-
-    `is_available()` is always False, so the agent never reaches `chat`; the
-    method exists to satisfy the ChatClient protocol and fails loudly if the
-    guard is ever removed.
-    """
-
-    model = "deterministic"
-    base_url = "local"
-
-    @staticmethod
-    def is_available() -> bool:
-        return False
-
-    def chat(self, messages: list[dict[str, str]]) -> str:
-        raise OllamaUnavailable("The deterministic client cannot generate text.")
-
-
 @dataclass
 class CircuitState:
     failures: int = 0
@@ -79,7 +60,7 @@ class AgentOrchestrator:
         self.tool_registry = CatalogToolRegistry()
         self.legacy_agent = AnimeAgent(
             recommender,
-            client=DeterministicClient(),
+            client=CatalogOnlyClient(),
             get_session_profile=sessions.get,
             update_session_preferences=sessions.update,
         )
@@ -585,9 +566,7 @@ class AgentOrchestrator:
         await asyncio.gather(*(provider.close() for provider in self.providers.values()), return_exceptions=True)
 
     def _provider_order(self) -> list[str]:
-        if self.settings.llm_provider == "gemini":
-            return ["gemini", "ollama"]
-        return ["ollama", "gemini"]
+        return ["gemini"]
 
     def _circuit_allows(self, provider_name: str) -> bool:
         state = self.circuits[provider_name]

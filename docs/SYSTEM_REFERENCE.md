@@ -20,7 +20,7 @@ experiment record see the reports under
 
 ```text
 user message
-  -> Gemini/Ollama returns structured AgentIntent
+  -> Gemini returns structured AgentIntent
   -> Pydantic validates and normalizes every field
   -> backend derives an allowlisted tool plan
   -> backend resolves entities and executes catalog joins/filters
@@ -287,7 +287,7 @@ python scripts/evaluate_recommender.py
 - NumPy, Sentence Transformers, PyTorch CPU
 - SciPy for offline evaluation only; the web application never imports it
 - SQLAlchemy 2.x and SQLite
-- Gemini REST API and local Ollama/Gemma 3 adapters
+- Gemini REST API and deterministic catalog fallback
 - Plain HTML, CSS, and JavaScript
 - Pytest, Ruff, MyPy, GitHub Actions
 - Docker and Docker Compose
@@ -305,7 +305,7 @@ Copy-Item .env.example .env
 python run_app.py
 ```
 
-Open `http://127.0.0.1:8000`. Set `LLM_PROVIDER=ollama` for local Gemma 3 or `LLM_PROVIDER=gemini` plus a backend-only `GEMINI_API_KEY` for a public deployment. Search and recommendation endpoints remain available when both LLM providers are offline.
+Open `http://127.0.0.1:8000`. Set `LLM_PROVIDER=gemini` plus a backend-only `GEMINI_API_KEY` for text generation. Search and recommendation endpoints remain available when Gemini is unavailable.
 
 ### Runtime artifacts
 
@@ -355,7 +355,7 @@ python -m pytest -q
 node --check frontend/app.js
 ```
 
-Tests mock Gemini and Ollama, so CI requires no provider key and makes no paid API calls.
+Tests mock Gemini, so CI requires no provider key and makes no paid API calls.
 
 ## Docker And Hugging Face Spaces
 
@@ -366,7 +366,7 @@ docker run --rm -p 8000:7860 -e HF_DATASET_REPO=Seiitsu/anime-compass-data anime
 
 Or use `docker compose up --build`. The named volume stores only runtime SQLite data.
 
-For a Hugging Face Docker Space, set `HF_DATASET_REPO=Seiitsu/anime-compass-data` as a Space variable. Missing artifacts are downloaded at startup and verified against `data/artifacts.manifest.json`. Add `LLM_PROVIDER=gemini` as a variable and `GEMINI_API_KEY` as a secret. Ollama remains the zero-cost local option but is not expected to run inside a small public Space.
+For a Hugging Face Docker Space, set `HF_DATASET_REPO=Seiitsu/anime-compass-data` as a Space variable. Missing artifacts are downloaded at startup and verified against `data/artifacts.manifest.json`. Add `LLM_PROVIDER=gemini` as a variable and `GEMINI_API_KEY` as a secret. Catalog tools remain available without Gemini.
 
 The complete account and repository checklist is in [PUBLISHING.md](PUBLISHING.md).
 
@@ -399,7 +399,7 @@ Provider credentials are loaded only from ignored backend environment files. Req
 - Built a leakage-safe full-catalog recommendation benchmark with paired bootstrap intervals, threshold
   sensitivity, coverage, novelty, popularity-bias, diversity, and latency diagnostics; used it to replace the
   previous default with ALS at +42.6% NDCG@10 and roughly 465× lower p50 latency on the same 800 users.
-- Built a local-first anime recommendation Agent with FastAPI, Pydantic-constrained LLM intent parsing, typed tool routing, catalog-grounded response validation, and bounded deterministic replanning that relaxes over-constrained filters without ever relaxing verified entity constraints, across Gemini and Ollama/Gemma 3 providers.
+- Built a local-first anime recommendation Agent with FastAPI, Pydantic-constrained LLM intent parsing, typed tool routing, catalog-grounded response validation, and bounded deterministic replanning that relaxes over-constrained filters without ever relaxing verified entity constraints, using Gemini with a deterministic catalog fallback.
 - Implemented an explainable hybrid recommender over 18,064 titles and 56.7M anonymous ratings using scalable user-centred collaborative projections, metadata/synopsis TF-IDF, LSA, creator signals, hard entity joins, diversity reranking, and session feedback.
 - Built a reproducible data-quality and ablation pipeline plus 395 automated API, Agent, ranking,
   artifact-integrity, security, and transcript regression tests, with graceful deterministic fallback when LLM

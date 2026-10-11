@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .agent_policy import SYSTEM_POLICY
+from .chat_client import CatalogOnlyClient, ChatClient, ChatUnavailable
 from .intent import (
     EntityMention,
     InferredConstraint,
@@ -15,7 +16,6 @@ from .intent import (
     intent_parser_prompt,
     parse_structured_intent,
 )
-from .ollama_client import ChatClient, OllamaClient, OllamaUnavailable
 from .recommender import AnimeRecommender, normalize_label, series_key, tokenize
 
 # The behavioural half comes from the one shared policy, so this path cannot
@@ -253,7 +253,7 @@ class AnimeAgent:
         update_session_preferences: Callable[[str | None, dict[str, Any]], dict[str, Any]] | None = None,
     ):
         self.recommender = recommender
-        self.client: ChatClient = client if client is not None else OllamaClient()
+        self.client: ChatClient = client if client is not None else CatalogOnlyClient()
         self.entity_resolver = recommender.entity_resolver
         self.get_session_profile = get_session_profile or (lambda _session_id: {})
         self.update_session_preferences = update_session_preferences or (lambda _session_id, _patch: {})
@@ -269,7 +269,7 @@ class AnimeAgent:
 
     def status(self) -> dict[str, Any]:
         return {
-            "provider": "ollama",
+            "provider": "custom" if self.client.is_available() else "deterministic",
             "model": self.client.model,
             "base_url": self.client.base_url,
             "available": self.client.is_available(),
@@ -295,8 +295,8 @@ class AnimeAgent:
         intent, parser_mode, parser_error = self._parse_intent(message, history, session)
         try:
             response = self._respond_from_intent(intent, message, history, session_id, session)
-        except (KeyError, TypeError, ValueError, OllamaUnavailable) as exc:
-            if parser_mode != "qwen_structured":
+        except (KeyError, TypeError, ValueError, ChatUnavailable) as exc:
+            if parser_mode != "structured_chat":
                 raise
             parser_mode = "rule_fallback"
             parser_error = f"Structured tool orchestration failed: {exc}"
@@ -346,13 +346,13 @@ class AnimeAgent:
                 chat_json = getattr(self.client, "chat_json", None)
                 raw = chat_json(messages) if callable(chat_json) else self.client.chat(messages)
                 parsed = parse_structured_intent(raw, meta["genres"], meta["types"])
-                return parsed, "qwen_structured", None
-            except (IntentValidationError, OllamaUnavailable, TypeError, ValueError) as exc:
+                return parsed, "structured_chat", None
+            except (IntentValidationError, ChatUnavailable, TypeError, ValueError) as exc:
                 parser_error = str(exc)
             except Exception as exc:
                 parser_error = f"Intent parser failed: {exc}"
         else:
-            parser_error = "Ollama is unavailable"
+            parser_error = "Text generation is unavailable"
         return self._rule_based_intent(message, history), "rule_fallback", parser_error
 
     def _rule_based_intent(self, message: str, history: list[dict[str, str]]) -> StructuredIntent:
@@ -821,13 +821,13 @@ class AnimeAgent:
                     intent.required_voice_actors,
                 ):
                     content = candidate
-            except OllamaUnavailable:
+            except ChatUnavailable:
                 pass
         diagnostics = result.get("diagnostics", {})
         response_mode = (
             "catalog_verified"
             if has_required_voice_actor
-            else ("ollama" if content != fallback else "catalog_fallback")
+            else ("generated" if content != fallback else "catalog_fallback")
         )
         return {
             "mode": response_mode,
@@ -878,10 +878,10 @@ class AnimeAgent:
                 )
                 if self._valid_introduction_answer(candidate, details["title"]):
                     content = candidate
-            except OllamaUnavailable:
+            except ChatUnavailable:
                 pass
         return {
-            "mode": "ollama" if content != fallback else "catalog_introduction",
+            "mode": "generated" if content != fallback else "catalog_introduction",
             "answer": content,
             "trace": [
                 {
@@ -1043,9 +1043,9 @@ class AnimeAgent:
             content = self.client.chat(
                 [{"role": "system", "content": SYSTEM_PROMPT}] + history[-8:] + [{"role": "user", "content": message}]
             )
-        except OllamaUnavailable:
+        except ChatUnavailable:
             content = "The local language model could not complete that request."
-        return {"mode": "ollama", "answer": content, "trace": [], "agent": self.status()}
+        return {"mode": "generated", "answer": content, "trace": [], "agent": self.status()}
 
     def _merge_followup_intent(
         self,
@@ -1959,14 +1959,14 @@ class AnimeAgent:
                     },
                 ]
             )
-        except OllamaUnavailable:
+        except ChatUnavailable:
             content = fallback
 
         if not self._valid_introduction_answer(content, details["title"]):
             content = fallback
 
         return {
-            "mode": "ollama" if content != fallback else "catalog_introduction",
+            "mode": "generated" if content != fallback else "catalog_introduction",
             "answer": content,
             "trace": trace,
             "agent": self.status(),
@@ -2156,10 +2156,9 @@ class AnimeAgent:
                     },
                 ]
             )
-        except OllamaUnavailable:
+        except ChatUnavailable:
             return self._agent_error_response(
-                "Ollama is reachable, but the chat request failed or timed out. "
-                "I used the local catalog recommender instead.",
+                "The text generation request failed or timed out. I used the local catalog recommender instead.",
                 fallback,
                 trace,
             )
@@ -2169,7 +2168,7 @@ class AnimeAgent:
             content = fallback
 
         return {
-            "mode": "ollama",
+            "mode": "generated",
             "answer": content,
             "trace": trace,
             "agent": self.status(),
@@ -2753,7 +2752,7 @@ class AnimeAgent:
             limit=requested_limit,
         )
         lines = [
-            "The local LLM agent is offline. Start Ollama and run `ollama pull gemma3:12b` to enable the full tool-calling agent.",
+            "These results were generated by the catalog recommender.",
             "",
             format_recommendation_answer(picks, limit=requested_limit),
         ]

@@ -1,19 +1,6 @@
 # Anime Compass on Google Cloud Run.
-#
-# Converged from Dockerfile.vercel -- the one image that has actually been
-# built and pushed by a real platform -- rather than written fresh, so Cloud
-# Run runs the same dependency stack, the same artifacts and the same launcher.
-# Only three things differ from that file:
-#
-#   1. PORT defaults to 8080. Cloud Run injects PORT for every instance, so the
-#      default only matters for a local `docker run`.
-#   2. EXPOSE documents 8080 instead of 80.
-#   3. Comments that described Vercel's entrypoint wrapper now say what those
-#      measures mean here.
-#
-# The requirements-vercel.txt, constraints-vercel.txt and vercel_start.sh names
-# are historical. Their contents are platform-neutral, and reusing them is what
-# keeps this image's dependency closure identical to the one already proven.
+# Dependencies and model revisions stay pinned to the verified production stack.
+# Shared container support files have platform-neutral names.
 #
 # Cloud Run behaviour this image relies on:
 #
@@ -118,10 +105,10 @@ USER user
 WORKDIR $HOME/app
 
 COPY --chown=user requirements-api.txt requirements-embeddings.txt requirements-web.txt \
-                  requirements-vercel.txt constraints-vercel.txt ./
+                  requirements-cpu.txt constraints-container.txt ./
 
 # 1. PyTorch, CPU build, in a layer of its own (~196 MB compressed).
-RUN pip install --no-cache-dir --user -c constraints-vercel.txt -r requirements-vercel.txt
+RUN pip install --no-cache-dir --user -c constraints-container.txt -r requirements-cpu.txt
 
 # 2. Everything else. The constraints file is what keeps step 1 intact:
 #    sentence-transformers depends on torch, and without the pin this install
@@ -131,7 +118,7 @@ RUN pip install --no-cache-dir --user -c constraints-vercel.txt -r requirements-
 #    holds sentence-transformers and transformers to the versions the last real
 #    build resolved, so `>=5.0,<6` cannot drift onto a 5.x this deployment was
 #    never verified against.
-RUN pip install --no-cache-dir --user -c constraints-vercel.txt \
+RUN pip install --no-cache-dir --user -c constraints-container.txt \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         -r requirements-web.txt
 
@@ -183,13 +170,7 @@ RUN python scripts/download_artifacts.py \
 # 6. Application source, including frontend/ which FastAPI mounts at /.
 COPY --chown=user . .
 
-# 7. Build the launcher, resolving the interpreter from this image rather than
-#    assuming where it lives. This hardening came from Vercel, whose entrypoint
-#    wrapper dropped PATH and HOME. Cloud Run preserves the image environment,
-#    so here it is redundant rather than required -- but it is what reached
-#    "starting uvicorn" on a real platform, and the redundancy costs about a
-#    second. `sh -n` parses the result, turning a shell syntax error into a
-#    build failure instead of a silent exit at run time.
+# 7. Resolve interpreter and package paths and syntax-check the launcher.
 RUN set -eu; \
     PYBIN="$(python -c 'import sys; print(sys.executable)')"; \
     echo "[build] interpreter resolved to ${PYBIN}"; \
@@ -202,19 +183,19 @@ RUN set -eu; \
     printf '%s' "${SITEDIR}" > /home/user/.python-site; \
     sed -e "s|__PYTHON_BIN__|${PYBIN}|" -e "s|__APP_DIR__|${HOME}/app|" \
         -e "s|__SITE_PACKAGES__|${SITEDIR}|" \
-        scripts/vercel_start.sh > /home/user/vercel_start.sh; \
-    chmod +x /home/user/vercel_start.sh; \
-    /bin/sh -n /home/user/vercel_start.sh; \
-    grep -E '^(PY|APP_DIR|SITE_PACKAGES)=' /home/user/vercel_start.sh; \
-    if grep -q '__[A-Z_]*__' /home/user/vercel_start.sh; then \
+        scripts/container_start.sh > /home/user/container_start.sh; \
+    chmod +x /home/user/container_start.sh; \
+    /bin/sh -n /home/user/container_start.sh; \
+    grep -E '^(PY|APP_DIR|SITE_PACKAGES)=' /home/user/container_start.sh; \
+    if grep -q '__[A-Z_]*__' /home/user/container_start.sh; then \
         echo '[build] FATAL: unsubstituted placeholder in launcher'; \
-        grep -n '__[A-Z_]*__' /home/user/vercel_start.sh; \
+        grep -n '__[A-Z_]*__' /home/user/container_start.sh; \
         exit 1; \
     fi; \
     env -i "${PYBIN}" -c "import sys; sys.path.insert(0, '${SITEDIR}'); import fastapi, numpy, lightgbm, sentence_transformers, torch; print('[build] dependencies importable with HOME unset')"; \
     printf '%s\n' \
         'import os, urllib.request' \
-        'port = os.environ.get("PORT", "80")' \
+        'port = os.environ.get("PORT", "8080")' \
         'urllib.request.urlopen("http://127.0.0.1:" + port + "/api/ready", timeout=3)' \
         > /home/user/healthcheck.py; \
     "${PYBIN}" -m py_compile /home/user/healthcheck.py
@@ -233,4 +214,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
 # becomes PID 1 and receives Cloud Run's SIGTERM directly when an instance is
 # scaled down -- without that the shell holds PID 1 and the shutdown grace
 # period ends in a kill rather than a drain.
-CMD ["/bin/sh", "/home/user/vercel_start.sh"]
+CMD ["/bin/sh", "/home/user/container_start.sh"]

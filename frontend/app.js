@@ -220,7 +220,7 @@ function updateAgentStatus(agent) {
     els.agentStatus.textContent = `${provider}${agent.model || "agent"} online`;
     els.agentStatus.className = "status-pill online";
   } else {
-    els.agentStatus.textContent = "Catalog tools ready / LLM offline";
+    els.agentStatus.textContent = "Catalog tools ready / Gemini unavailable";
     els.agentStatus.className = "status-pill degraded";
   }
 }
