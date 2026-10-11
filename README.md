@@ -28,7 +28,7 @@ same ranking path, plus the model results, evaluation protocol, and rejected exp
 - **The evaluation protocol is deliberately hard.** Full-catalog ranking against every held-out positive, not the
   common one-positive-versus-99-sampled-negatives shortcut.
 - **Production concerns are handled**: artifact checksums, role separation between evaluation and serving models,
-  fail-loud catalog validation, and a NumPy-only serving path.
+  fail-loud catalog validation, and frozen models served with NumPy and LightGBM.
 
 ## Key Results
 
@@ -152,7 +152,7 @@ Each had a predeclared decision rule. Reporting them is the point: the architect
 
 ## Engineering
 
-- **449 tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
+- **Regression tests**, ruff, ruff-format, and mypy across `app`, `backend`, and `scripts`, all enforced in CI.
 - **Artifact integrity**: SHA-256 pinning, catalog-digest pinning, and role separation between the evaluation and
   production models. A catalog mismatch refuses startup rather than silently serving a stale model.
 - **Frozen model serving.** ALS fold-in uses NumPy; the promoted LambdaMART
@@ -304,7 +304,7 @@ app/                              FastAPI service
 scripts/                          build, evaluate, verify, migrate, compact
 docs/                             architecture, evaluation, portfolio summary
 data/evaluation/personalized/     experiment reports and decision records
-tests/                            449 tests
+tests/                            regression and contract tests
 ```
 
 ## Data And License
