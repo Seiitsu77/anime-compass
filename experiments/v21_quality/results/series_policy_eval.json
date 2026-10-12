@@ -1,0 +1,1896 @@
+{
+  "protocol": {
+    "users": 800,
+    "user_population": "reranker experiment confirmation users (already opened once)",
+    "candidates": 300,
+    "relevance": "held-out test positives; validation positives are hidden too and are never excluded",
+    "policies": {
+      "none": "no franchise filter",
+      "production": "one entry per franchise, and nothing from a franchise the user already Liked",
+      "dedupe": "one entry per franchise; a Liked franchise may contribute one further entry",
+      "dedupe_mainline": "as dedupe, but a Liked franchise may contribute only a TV series or a film",
+      "dedupe_liked1": "as dedupe, with at most one entry from Liked franchises in each batch of 18",
+      "dedupe_liked3": "as dedupe, with at most three entries from Liked franchises in each batch of 18",
+      "batch_dedupe": "one entry per franchise within each batch of 18; other entries wait for a later batch",
+      "cap2": "at most two entries per franchise, Liked franchises included"
+    },
+    "isolation": "assert_isolated() ran for every user and every exclusion arm"
+  },
+  "held_out_positives": {
+    "total": 8738,
+    "in_a_liked_franchise": 3071,
+    "share_in_a_liked_franchise": 0.3514534218356603
+  },
+  "series_policies": {
+    "none": {
+      "description": "no franchise filter",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.24560446340279607,
+          "ci_low": 0.23087141923894167,
+          "ci_high": 0.25964209579357855,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.2672997175018313,
+          "ci_low": 0.25369244591284096,
+          "ci_high": 0.2801340061325279,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.31326445950032755,
+          "ci_low": 0.2962129143849181,
+          "ci_high": 0.3303448936886448,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.4940085941345657,
+          "ci_low": 0.4756578587605274,
+          "ci_high": 0.5112398104008206,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.19125,
+          "ci_low": 1.10746875,
+          "ci_high": 1.28125,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.20125,
+          "ci_low": 1.10875,
+          "ci_high": 1.28875,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.12747551061318954,
+          "ci_low": 0.11602294965840851,
+          "ci_high": 0.13968720083557257,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.21750321325414987,
+          "ci_low": 0.2000364891079355,
+          "ci_high": 0.236973632342685,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.2828062384594885,
+          "ci_low": 0.2679486639082642,
+          "ci_high": 0.2970140718666236,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.306134548262589,
+          "ci_low": 0.29157589621585533,
+          "ci_high": 0.3199000629072677,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.34528413920693446,
+          "ci_low": 0.3271011081497813,
+          "ci_high": 0.36333990402779887,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.5365168339789703,
+          "ci_low": 0.5172882710667043,
+          "ci_high": 0.5540647739921171,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.13125,
+          "ci_low": 1.05,
+          "ci_high": 1.2175,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.60625,
+          "ci_low": 1.48871875,
+          "ci_high": 1.72125,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.11307430532903108,
+          "ci_low": 0.10212791367153021,
+          "ci_high": 0.1250707036852868,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.22708951335155667,
+          "ci_low": 0.2083994860187559,
+          "ci_high": 0.24613081392871922,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.037201775056692414,
+        "ci_low": 0.02760738766604512,
+        "ci_high": 0.0459523105934391,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": -0.014401205284158449,
+        "ci_low": -0.023045855223794917,
+        "ci_high": -0.0057484699254903935,
+        "n": 779,
+        "significant": true
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.10120898625592513,
+          "ci_low": 0.08580835265593803,
+          "ci_high": 0.11604484300272366,
+          "n": 800,
+          "significant": true
+        },
+        "ndcg@18": {
+          "mean": 0.1143588493973102,
+          "ci_low": 0.09948969723416308,
+          "ci_high": 0.12857835005346646,
+          "n": 800,
+          "significant": true
+        },
+        "recall@18": {
+          "mean": 0.13888573981826755,
+          "ci_low": 0.12317388429140412,
+          "ci_high": 0.1549318917183244,
+          "n": 800,
+          "significant": true
+        },
+        "recall@54": {
+          "mean": 0.20147100088340153,
+          "ci_low": 0.1836211086031993,
+          "ci_high": 0.2193685625081277,
+          "n": 800,
+          "significant": true
+        },
+        "new_hits@18": {
+          "mean": -0.61375,
+          "ci_low": -0.685,
+          "ci_high": -0.54625,
+          "n": 800,
+          "significant": true
+        },
+        "new_ndcg@10": {
+          "mean": -0.10335474400045074,
+          "ci_low": -0.1119000698335517,
+          "ci_high": -0.09501816388350973,
+          "n": 779,
+          "significant": true
+        },
+        "new_recall@18": {
+          "mean": -0.07743270055689844,
+          "ci_low": -0.08769934541792679,
+          "ci_high": -0.06728715788086963,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 16.085,
+          "ci_low": 15.95375,
+          "ci_high": 16.21375,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 7.7775,
+          "ci_low": 7.52740625,
+          "ci_high": 8.03,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 2.2725,
+          "ci_low": 2.1825,
+          "ci_high": 2.37,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 300.0,
+          "ci_low": 300.0,
+          "ci_high": 300.0,
+          "n": 800
+        }
+      }
+    },
+    "production": {
+      "description": "one entry per franchise, and nothing from a franchise the user already Liked",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.15668845161051692,
+          "ci_low": 0.1446835849928896,
+          "ci_high": 0.16978591575847826,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.1679820632884531,
+          "ci_low": 0.1563980059414832,
+          "ci_high": 0.18025855586913778,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.1908565713666971,
+          "ci_low": 0.1762874857384507,
+          "ci_high": 0.20589677371819948,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.31430126832759653,
+          "ci_low": 0.2982607189318423,
+          "ci_high": 0.33058081252768584,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.565,
+          "ci_low": 1.4625,
+          "ci_high": 1.6675,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.1840686632977778,
+          "ci_low": 0.16955434836971123,
+          "ci_high": 0.19860763922795166,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.27758642768746045,
+          "ci_low": 0.25856529366839,
+          "ci_high": 0.29760394096887105,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.18159725220356335,
+          "ci_low": 0.16906241104041322,
+          "ci_high": 0.19511337595649755,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.19177569886527876,
+          "ci_low": 0.17956605443261558,
+          "ci_high": 0.2044083607693121,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.20639839938866686,
+          "ci_low": 0.19243447406973693,
+          "ci_high": 0.22122698013667821,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.3350458330955689,
+          "ci_low": 0.3192501233995321,
+          "ci_high": 0.3519803950990552,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.745,
+          "ci_low": 1.63625,
+          "ci_high": 1.8625,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.21642904932948184,
+          "ci_low": 0.20135509237704557,
+          "ci_high": 0.23218754912150566,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.30452221390845513,
+          "ci_low": 0.28567323967133157,
+          "ci_high": 0.32496168706800127,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.024908800593046437,
+        "ci_low": 0.016202068204792905,
+        "ci_high": 0.033891988248869055,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": 0.032360386031704,
+        "ci_low": 0.021524199453063508,
+        "ci_high": 0.043267805368202475,
+        "n": 779,
+        "significant": true
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800,
+          "significant": false
+        },
+        "ndcg@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800,
+          "significant": false
+        },
+        "recall@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800,
+          "significant": false
+        },
+        "recall@54": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800,
+          "significant": false
+        },
+        "new_hits@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800,
+          "significant": false
+        },
+        "new_ndcg@10": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 779,
+          "significant": false
+        },
+        "new_recall@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 779,
+          "significant": false
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 18.0,
+          "ci_low": 18.0,
+          "ci_high": 18.0,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 212.8625,
+          "ci_low": 211.52734375,
+          "ci_high": 214.23378125,
+          "n": 800
+        }
+      }
+    },
+    "dedupe": {
+      "description": "one entry per franchise; a Liked franchise may contribute one further entry",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.24073495730885974,
+          "ci_low": 0.2266130848698484,
+          "ci_high": 0.25421591807570326,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.25909490843700306,
+          "ci_low": 0.24555889852603016,
+          "ci_high": 0.2719486143705447,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.2963972253151657,
+          "ci_low": 0.2801484733894356,
+          "ci_high": 0.3130420788385988,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.4689639723441495,
+          "ci_low": 0.45047742020631054,
+          "ci_high": 0.48565295822684607,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.25,
+          "ci_low": 1.1625,
+          "ci_high": 1.3388124999999997,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.05625,
+          "ci_low": 0.97375,
+          "ci_high": 1.13875,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.13296237287196944,
+          "ci_low": 0.12126616321059247,
+          "ci_high": 0.14542730750764524,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.2284569946445572,
+          "ci_low": 0.20972840680696597,
+          "ci_high": 0.2479534911238006,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.27414917455371607,
+          "ci_low": 0.25915874747305734,
+          "ci_high": 0.28790935914089877,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.295091092635174,
+          "ci_low": 0.2811339385990374,
+          "ci_high": 0.3080539524076808,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.32482460496478743,
+          "ci_low": 0.3082074530702152,
+          "ci_high": 0.3412281827090628,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.5003815667259396,
+          "ci_low": 0.483313312137334,
+          "ci_high": 0.5168271256955429,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.19375,
+          "ci_low": 1.11,
+          "ci_high": 1.27753125,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.435,
+          "ci_low": 1.3325,
+          "ci_high": 1.54125,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.11665262802137238,
+          "ci_low": 0.1054453288266689,
+          "ci_high": 0.1286008189366595,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.23889659747431996,
+          "ci_low": 0.22016567526412623,
+          "ci_high": 0.25880880379278065,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.03341421724485632,
+        "ci_low": 0.023487639581628566,
+        "ci_high": 0.042717180204885005,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": -0.016309744850597042,
+        "ci_low": -0.025439549270117635,
+        "ci_high": -0.007496261147473049,
+        "n": 779,
+        "significant": true
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.09255192235015272,
+          "ci_low": 0.07783283842004146,
+          "ci_high": 0.10670507236449828,
+          "n": 800,
+          "significant": true
+        },
+        "ndcg@18": {
+          "mean": 0.10331539376989526,
+          "ci_low": 0.089501595158977,
+          "ci_high": 0.11643457755879817,
+          "n": 800,
+          "significant": true
+        },
+        "recall@18": {
+          "mean": 0.11842620557612056,
+          "ci_low": 0.10500568650837673,
+          "ci_high": 0.13196029856140523,
+          "n": 800,
+          "significant": true
+        },
+        "recall@54": {
+          "mean": 0.1653357336303706,
+          "ci_low": 0.15147555210544675,
+          "ci_high": 0.179296603914632,
+          "n": 800,
+          "significant": true
+        },
+        "new_hits@18": {
+          "mean": -0.55125,
+          "ci_low": -0.61628125,
+          "ci_high": -0.4862187500000002,
+          "n": 800,
+          "significant": true
+        },
+        "new_ndcg@10": {
+          "mean": -0.09977642130810943,
+          "ci_low": -0.10793768973362144,
+          "ci_high": -0.09168963724877115,
+          "n": 779,
+          "significant": true
+        },
+        "new_recall@18": {
+          "mean": -0.06562561643413514,
+          "ci_low": -0.07465995256598057,
+          "ci_high": -0.05713472754600488,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 18.0,
+          "ci_low": 18.0,
+          "ci_high": 18.0,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 6.6025,
+          "ci_low": 6.381187499999999,
+          "ci_high": 6.82375,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 234.60375,
+          "ci_low": 233.39350000000002,
+          "ci_high": 235.84134375,
+          "n": 800
+        }
+      }
+    },
+    "dedupe_mainline": {
+      "description": "as dedupe, but a Liked franchise may contribute only a TV series or a film",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.23961970081963918,
+          "ci_low": 0.2258770467672302,
+          "ci_high": 0.2534300972578414,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.25723433503051185,
+          "ci_low": 0.24395996191150102,
+          "ci_high": 0.27038364574919194,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.29245430354281055,
+          "ci_low": 0.27640353918878935,
+          "ci_high": 0.3087936954254782,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.456866634445194,
+          "ci_low": 0.4385759395580141,
+          "ci_high": 0.4739815116188992,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.27125,
+          "ci_low": 1.1849687500000001,
+          "ci_high": 1.36003125,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.02375,
+          "ci_low": 0.9449687499999999,
+          "ci_high": 1.10625,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.13466737883778726,
+          "ci_low": 0.12292928635340776,
+          "ci_high": 0.14710376660151958,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.23302970891804684,
+          "ci_low": 0.21412570305324696,
+          "ci_high": 0.25255611673961065,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.27060743646865754,
+          "ci_low": 0.25544340124975584,
+          "ci_high": 0.28443013174082726,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.2903061387860767,
+          "ci_low": 0.27627848404715194,
+          "ci_high": 0.30351978140628005,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.31820879543630626,
+          "ci_low": 0.3013538838900578,
+          "ci_high": 0.3346261154523043,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.48514729839734144,
+          "ci_low": 0.4680549634246037,
+          "ci_high": 0.502318202594419,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.2175,
+          "ci_low": 1.13375,
+          "ci_high": 1.3025,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.3625,
+          "ci_low": 1.26375,
+          "ci_high": 1.465,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.11830904071414723,
+          "ci_low": 0.10694871830897025,
+          "ci_high": 0.13035491089585544,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.24285124881754344,
+          "ci_low": 0.2240708835580153,
+          "ci_high": 0.26287397105133986,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.03098773564901836,
+        "ci_low": 0.021391178096083607,
+        "ci_high": 0.040133920702553366,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": -0.01635833812364001,
+        "ci_low": -0.025575017779847508,
+        "ci_high": -0.007688558036537078,
+        "n": 779,
+        "significant": true
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.0890101842650942,
+          "ci_low": 0.074389051089172,
+          "ci_high": 0.1028578713226795,
+          "n": 800,
+          "significant": true
+        },
+        "ndcg@18": {
+          "mean": 0.09853043992079791,
+          "ci_low": 0.08495587947117983,
+          "ci_high": 0.11189973311697123,
+          "n": 800,
+          "significant": true
+        },
+        "recall@18": {
+          "mean": 0.11181039604763938,
+          "ci_low": 0.09858879969259074,
+          "ci_high": 0.12429343407470783,
+          "n": 800,
+          "significant": true
+        },
+        "recall@54": {
+          "mean": 0.1501014653017726,
+          "ci_low": 0.1366161643799568,
+          "ci_high": 0.1631585876059819,
+          "n": 800,
+          "significant": true
+        },
+        "new_hits@18": {
+          "mean": -0.5275,
+          "ci_low": -0.5925,
+          "ci_high": -0.46375,
+          "n": 800,
+          "significant": true
+        },
+        "new_ndcg@10": {
+          "mean": -0.0981200086153346,
+          "ci_low": -0.10621099940204716,
+          "ci_high": -0.09025851199897021,
+          "n": 779,
+          "significant": true
+        },
+        "new_recall@18": {
+          "mean": -0.061670965090911696,
+          "ci_low": -0.07035593402943287,
+          "ci_high": -0.05374171298814837,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 18.0,
+          "ci_low": 18.0,
+          "ci_high": 18.0,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 6.1575,
+          "ci_low": 5.9325,
+          "ci_high": 6.39,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 228.1775,
+          "ci_low": 226.9861875,
+          "ci_high": 229.40128125,
+          "n": 800
+        }
+      }
+    },
+    "dedupe_liked1": {
+      "description": "as dedupe, with at most one entry from Liked franchises in each batch of 18",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.2067110970175905,
+          "ci_low": 0.19315658718386078,
+          "ci_high": 0.21978682606358496,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.21711014223384545,
+          "ci_low": 0.20371657612964247,
+          "ci_high": 0.23006337699826757,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.23772097637021922,
+          "ci_low": 0.22172634220488108,
+          "ci_high": 0.25374399506992257,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.40769081166756377,
+          "ci_low": 0.3896464491307837,
+          "ci_high": 0.425465818789596,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.515,
+          "ci_low": 1.4125,
+          "ci_high": 1.615,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 0.2725,
+          "ci_low": 0.24125,
+          "ci_high": 0.305,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.15865762050643742,
+          "ci_low": 0.14626165283103326,
+          "ci_high": 0.17142003383401452,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.2704343042582079,
+          "ci_low": 0.25120154258568256,
+          "ci_high": 0.29008759023585534,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.23393951758463694,
+          "ci_low": 0.21987272234705177,
+          "ci_high": 0.247473540504645,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.2429376539462232,
+          "ci_low": 0.22893229986778135,
+          "ci_high": 0.2558471567568562,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.254854767787696,
+          "ci_low": 0.23856361679443513,
+          "ci_high": 0.27082760130727507,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.4339134131777269,
+          "ci_low": 0.41651081052728745,
+          "ci_high": 0.45111506948067104,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.67125,
+          "ci_low": 1.565,
+          "ci_high": 1.7850312499999998,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 0.29625,
+          "ci_low": 0.26375,
+          "ci_high": 0.3275,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.1737177676325272,
+          "ci_low": 0.16178971245232063,
+          "ci_high": 0.18668602750003677,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.29475999399602665,
+          "ci_low": 0.2757594393590411,
+          "ci_high": 0.3154385551798842,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.02722842056704641,
+        "ci_low": 0.017162865421550506,
+        "ci_high": 0.037036012524450386,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": 0.015060147126089737,
+        "ci_low": 0.0058231221292608035,
+        "ci_high": 0.024356535811407242,
+        "n": 779,
+        "significant": true
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.052342265381073554,
+          "ci_low": 0.040177002829493706,
+          "ci_high": 0.06475989207590159,
+          "n": 800,
+          "significant": true
+        },
+        "ndcg@18": {
+          "mean": 0.05116195508094444,
+          "ci_low": 0.03935309723845805,
+          "ci_high": 0.06321223763534299,
+          "n": 800,
+          "significant": true
+        },
+        "recall@18": {
+          "mean": 0.04845636839902916,
+          "ci_low": 0.03896572406852123,
+          "ci_high": 0.05803676230301668,
+          "n": 800,
+          "significant": true
+        },
+        "recall@54": {
+          "mean": 0.09886758008215801,
+          "ci_low": 0.08771612693068255,
+          "ci_high": 0.11066873835468763,
+          "n": 800,
+          "significant": true
+        },
+        "new_hits@18": {
+          "mean": -0.07375,
+          "ci_low": -0.09125,
+          "ci_high": -0.05625,
+          "n": 800,
+          "significant": true
+        },
+        "new_ndcg@10": {
+          "mean": -0.04271128169695466,
+          "ci_low": -0.04743526470931613,
+          "ci_high": -0.03815440949116205,
+          "n": 779,
+          "significant": true
+        },
+        "new_recall@18": {
+          "mean": -0.009762219912428451,
+          "ci_low": -0.012878364895475551,
+          "ci_high": -0.006769415578942941,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 18.0,
+          "ci_low": 18.0,
+          "ci_high": 18.0,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 0.9875,
+          "ci_low": 0.97875,
+          "ci_high": 0.995,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 234.60375,
+          "ci_low": 233.39350000000002,
+          "ci_high": 235.84134375,
+          "n": 800
+        }
+      }
+    },
+    "dedupe_liked3": {
+      "description": "as dedupe, with at most three entries from Liked franchises in each batch of 18",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.23225107768084335,
+          "ci_low": 0.21815558532531262,
+          "ci_high": 0.24554143733243514,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.24453652816875718,
+          "ci_low": 0.230961892612257,
+          "ci_high": 0.25707162355866414,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.2742170477450373,
+          "ci_low": 0.25738560698240714,
+          "ci_high": 0.290820839090272,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.4533307381358344,
+          "ci_low": 0.43480699159953173,
+          "ci_high": 0.46998344455753177,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.41375,
+          "ci_low": 1.31875,
+          "ci_high": 1.51,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 0.64625,
+          "ci_low": 0.5949687499999999,
+          "ci_high": 0.6975,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.14035183830378775,
+          "ci_low": 0.12857885016880102,
+          "ci_high": 0.15263539603649884,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.25362126285546394,
+          "ci_low": 0.2351572099352461,
+          "ci_high": 0.27336478917081214,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.2626989640038246,
+          "ci_low": 0.2478487961938966,
+          "ci_high": 0.27604511659109277,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.272943034397059,
+          "ci_low": 0.25882953164019473,
+          "ci_high": 0.2860383909116237,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.2931013979609045,
+          "ci_low": 0.27651991924119457,
+          "ci_high": 0.3097585945394463,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.4794912528742936,
+          "ci_low": 0.46161249172148355,
+          "ci_high": 0.49644140149974475,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.5475,
+          "ci_low": 1.44746875,
+          "ci_high": 1.65378125,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 0.705,
+          "ci_low": 0.64875,
+          "ci_high": 0.75625,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.1425986394869326,
+          "ci_low": 0.13172457184345446,
+          "ci_high": 0.1548666621675282,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.27568206245043575,
+          "ci_low": 0.25720667501512356,
+          "ci_high": 0.29575089308120894,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.03044788632298128,
+        "ci_low": 0.020686616412075507,
+        "ci_high": 0.04022554804982335,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": 0.0022468011831448744,
+        "ci_low": -0.00633923776432038,
+        "ci_high": 0.011213945674291207,
+        "n": 779,
+        "significant": false
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.08110171180026125,
+          "ci_low": 0.06761805062972315,
+          "ci_high": 0.09506326707141305,
+          "n": 800,
+          "significant": true
+        },
+        "ndcg@18": {
+          "mean": 0.08116733553178027,
+          "ci_low": 0.06792391755140731,
+          "ci_high": 0.0946483359264775,
+          "n": 800,
+          "significant": true
+        },
+        "recall@18": {
+          "mean": 0.08670299857223764,
+          "ci_low": 0.07451751773356798,
+          "ci_high": 0.09888941526135829,
+          "n": 800,
+          "significant": true
+        },
+        "recall@54": {
+          "mean": 0.14444541977872472,
+          "ci_low": 0.1310640182816448,
+          "ci_high": 0.1577144730980121,
+          "n": 800,
+          "significant": true
+        },
+        "new_hits@18": {
+          "mean": -0.1975,
+          "ci_low": -0.2275,
+          "ci_high": -0.16875,
+          "n": 800,
+          "significant": true
+        },
+        "new_ndcg@10": {
+          "mean": -0.07383040984254921,
+          "ci_low": -0.08048772415110166,
+          "ci_high": -0.06732590460306558,
+          "n": 779,
+          "significant": true
+        },
+        "new_recall@18": {
+          "mean": -0.028840151458019353,
+          "ci_low": -0.03519954035555596,
+          "ci_high": -0.022832997791101827,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 18.0,
+          "ci_low": 18.0,
+          "ci_high": 18.0,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 2.8325,
+          "ci_low": 2.79375,
+          "ci_high": 2.86753125,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 234.60375,
+          "ci_low": 233.39350000000002,
+          "ci_high": 235.84134375,
+          "n": 800
+        }
+      }
+    },
+    "batch_dedupe": {
+      "description": "one entry per franchise within each batch of 18; other entries wait for a later batch",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.24073495730885974,
+          "ci_low": 0.2266130848698484,
+          "ci_high": 0.25421591807570326,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.25909490843700306,
+          "ci_low": 0.24555889852603016,
+          "ci_high": 0.2719486143705447,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.2963972253151657,
+          "ci_low": 0.2801484733894356,
+          "ci_high": 0.3130420788385988,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.4919143992232901,
+          "ci_low": 0.4735372253637624,
+          "ci_high": 0.5089081015226661,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.25,
+          "ci_low": 1.1625,
+          "ci_high": 1.3388124999999997,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.05625,
+          "ci_low": 0.97375,
+          "ci_high": 1.13875,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.13296237287196944,
+          "ci_low": 0.12126616321059247,
+          "ci_high": 0.14542730750764524,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.2284569946445572,
+          "ci_low": 0.20972840680696597,
+          "ci_high": 0.2479534911238006,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.27414917455371607,
+          "ci_low": 0.25915874747305734,
+          "ci_high": 0.28790935914089877,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.295091092635174,
+          "ci_low": 0.2811339385990374,
+          "ci_high": 0.3080539524076808,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.32482460496478743,
+          "ci_low": 0.3082074530702152,
+          "ci_high": 0.3412281827090628,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.5330964775293059,
+          "ci_low": 0.5134971957153827,
+          "ci_high": 0.5507067497154889,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.19375,
+          "ci_low": 1.11,
+          "ci_high": 1.27753125,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.435,
+          "ci_low": 1.3325,
+          "ci_high": 1.54125,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.11665262802137238,
+          "ci_low": 0.1054453288266689,
+          "ci_high": 0.1286008189366595,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.23889659747431996,
+          "ci_low": 0.22016567526412623,
+          "ci_high": 0.25880880379278065,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.03341421724485632,
+        "ci_low": 0.023487639581628566,
+        "ci_high": 0.042717180204885005,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": -0.016309744850597042,
+        "ci_low": -0.025439549270117635,
+        "ci_high": -0.007496261147473049,
+        "n": 779,
+        "significant": true
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.09255192235015272,
+          "ci_low": 0.07783283842004146,
+          "ci_high": 0.10670507236449828,
+          "n": 800,
+          "significant": true
+        },
+        "ndcg@18": {
+          "mean": 0.10331539376989526,
+          "ci_low": 0.089501595158977,
+          "ci_high": 0.11643457755879817,
+          "n": 800,
+          "significant": true
+        },
+        "recall@18": {
+          "mean": 0.11842620557612056,
+          "ci_low": 0.10500568650837673,
+          "ci_high": 0.13196029856140523,
+          "n": 800,
+          "significant": true
+        },
+        "recall@54": {
+          "mean": 0.19805064443373704,
+          "ci_low": 0.1806075459437909,
+          "ci_high": 0.21644414434477366,
+          "n": 800,
+          "significant": true
+        },
+        "new_hits@18": {
+          "mean": -0.55125,
+          "ci_low": -0.61628125,
+          "ci_high": -0.4862187500000002,
+          "n": 800,
+          "significant": true
+        },
+        "new_ndcg@10": {
+          "mean": -0.09977642130810943,
+          "ci_low": -0.10793768973362144,
+          "ci_high": -0.09168963724877115,
+          "n": 779,
+          "significant": true
+        },
+        "new_recall@18": {
+          "mean": -0.06562561643413514,
+          "ci_low": -0.07465995256598057,
+          "ci_high": -0.05713472754600488,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 18.0,
+          "ci_low": 18.0,
+          "ci_high": 18.0,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 6.6025,
+          "ci_low": 6.381187499999999,
+          "ci_high": 6.82375,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 1.0,
+          "ci_low": 1.0,
+          "ci_high": 1.0,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 300.0,
+          "ci_low": 300.0,
+          "ci_high": 300.0,
+          "n": 800
+        }
+      }
+    },
+    "cap2": {
+      "description": "at most two entries per franchise, Liked franchises included",
+      "als": {
+        "ndcg@10": {
+          "mean": 0.24528236772608802,
+          "ci_low": 0.23088927763005837,
+          "ci_high": 0.2592023074016327,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.2661719012167584,
+          "ci_low": 0.25271188796793487,
+          "ci_high": 0.2789963739295673,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.3115322540423868,
+          "ci_low": 0.29478609201159245,
+          "ci_high": 0.3290098275629255,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.4894806563902314,
+          "ci_low": 0.47109896815819646,
+          "ci_high": 0.5060142096251925,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.2,
+          "ci_low": 1.11621875,
+          "ci_high": 1.29,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.16875,
+          "ci_low": 1.08125,
+          "ci_high": 1.25375,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.128247510987334,
+          "ci_low": 0.11681493643957909,
+          "ci_high": 0.14058361428683344,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.22081637420530828,
+          "ci_low": 0.20256906983077974,
+          "ci_high": 0.24026449243893871,
+          "n": 779
+        }
+      },
+      "lambdamart": {
+        "ndcg@10": {
+          "mean": 0.28254362261083293,
+          "ci_low": 0.2676960915583405,
+          "ci_high": 0.2965175395412757,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.30458147287100024,
+          "ci_low": 0.29030871117586426,
+          "ci_high": 0.3180377227571955,
+          "n": 800
+        },
+        "recall@18": {
+          "mean": 0.3417952484357483,
+          "ci_low": 0.3237665253525366,
+          "ci_high": 0.3592178917765825,
+          "n": 800
+        },
+        "recall@54": {
+          "mean": 0.5302489608936418,
+          "ci_low": 0.5113420260988878,
+          "ci_high": 0.5475754129192641,
+          "n": 800
+        },
+        "new_hits@18": {
+          "mean": 1.15125,
+          "ci_low": 1.0725,
+          "ci_high": 1.23625,
+          "n": 800
+        },
+        "liked_hits@18": {
+          "mean": 1.5675,
+          "ci_low": 1.45625,
+          "ci_high": 1.6800312499999999,
+          "n": 800
+        },
+        "new_ndcg@10": {
+          "mean": 0.11423241736894948,
+          "ci_low": 0.10327320620000482,
+          "ci_high": 0.1266043543486195,
+          "n": 779
+        },
+        "new_recall@18": {
+          "mean": 0.23227994639255228,
+          "ci_low": 0.21331165530734594,
+          "ci_high": 0.25130900105237824,
+          "n": 779
+        }
+      },
+      "reranker_gain_ndcg@10": {
+        "mean": 0.03726125488474491,
+        "ci_low": 0.02775838898745473,
+        "ci_high": 0.046162283344887846,
+        "n": 800,
+        "significant": true
+      },
+      "reranker_gain_new_ndcg@10": {
+        "mean": -0.01401509361838453,
+        "ci_low": -0.022596903319418733,
+        "ci_high": -0.005409691462623272,
+        "n": 779,
+        "significant": true
+      },
+      "vs_production": {
+        "ndcg@10": {
+          "mean": 0.10094637040726956,
+          "ci_low": 0.08563269947097896,
+          "ci_high": 0.11575014284114551,
+          "n": 800,
+          "significant": true
+        },
+        "ndcg@18": {
+          "mean": 0.11280577400572148,
+          "ci_low": 0.09804954539273954,
+          "ci_high": 0.12665054168647,
+          "n": 800,
+          "significant": true
+        },
+        "recall@18": {
+          "mean": 0.13539684904708146,
+          "ci_low": 0.12008858518722038,
+          "ci_high": 0.15124940439615153,
+          "n": 800,
+          "significant": true
+        },
+        "recall@54": {
+          "mean": 0.19520312779807292,
+          "ci_low": 0.17820332259518978,
+          "ci_high": 0.21265776779042692,
+          "n": 800,
+          "significant": true
+        },
+        "new_hits@18": {
+          "mean": -0.59375,
+          "ci_low": -0.66375,
+          "ci_high": -0.5275,
+          "n": 800,
+          "significant": true
+        },
+        "new_ndcg@10": {
+          "mean": -0.10219663196053233,
+          "ci_low": -0.11069763316147446,
+          "ci_high": -0.09396989012481752,
+          "n": 779,
+          "significant": true
+        },
+        "new_recall@18": {
+          "mean": -0.07224226751590285,
+          "ci_low": -0.0822545183951081,
+          "ci_high": -0.06256697141520849,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "list_shape": {
+        "distinct_franchises@18": {
+          "mean": 16.565,
+          "ci_low": 16.48996875,
+          "ci_high": 16.64625,
+          "n": 800
+        },
+        "liked_franchise_slots@18": {
+          "mean": 7.3925,
+          "ci_low": 7.15621875,
+          "ci_high": 7.63753125,
+          "n": 800
+        },
+        "max_per_franchise@18": {
+          "mean": 1.7725,
+          "ci_low": 1.74121875,
+          "ci_high": 1.80125,
+          "n": 800
+        },
+        "available_of_300": {
+          "mean": 274.6325,
+          "ci_low": 273.716125,
+          "ci_high": 275.5500625,
+          "n": 800
+        }
+      }
+    }
+  },
+  "sequel_status": {
+    "liked_franchise": {
+      "recommendations": 5282,
+      "per_user": 6.6025,
+      "share": {
+        "completed and liked (held out)": 0.4432033320711852,
+        "not in the user's list": 0.20617190458159787,
+        "completed, rated below 8": 0.20333207118515714,
+        "completed, unrated": 0.046005301022340024,
+        "plan to watch": 0.044680045437334344,
+        "currently watching": 0.03161681181370693,
+        "on hold": 0.01684967815221507,
+        "dropped": 0.00814085573646346
+      }
+    },
+    "new_franchise": {
+      "recommendations": 9118,
+      "per_user": 11.3975,
+      "share": {
+        "not in the user's list": 0.400197411713095,
+        "completed and liked (held out)": 0.21177889888133364,
+        "completed, rated below 8": 0.16747093660890547,
+        "plan to watch": 0.09201579293704759,
+        "completed, unrated": 0.04990129414345251,
+        "currently watching": 0.036740513270454044,
+        "on hold": 0.026321561745996928,
+        "dropped": 0.01557359069971485
+      }
+    }
+  },
+  "watched_history": {
+    "known_share_of_positives": {
+      "mean": 0.8073710269612545,
+      "ci_low": 0.805551968368601,
+      "ci_high": 0.8090815850788747,
+      "n": 800
+    },
+    "titles_rated_below_8_per_user": {
+      "mean": 90.81,
+      "ci_low": 79.82965625,
+      "ci_high": 103.0300625,
+      "n": 800
+    },
+    "other_watched_titles_per_user": {
+      "mean": 63.35625,
+      "ci_low": 56.584875000000004,
+      "ci_high": 71.12984374999999,
+      "n": 800
+    },
+    "arms": {
+      "none": {
+        "titles_excluded": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800
+        },
+        "recall@300": {
+          "mean": 0.7912843513733436,
+          "ci_low": 0.7764315920694445,
+          "ci_high": 0.805330662515556,
+          "n": 800
+        },
+        "ndcg@10": {
+          "mean": 0.2828062384594885,
+          "ci_low": 0.2679486639082642,
+          "ci_high": 0.2970140718666236,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.306134548262589,
+          "ci_low": 0.29157589621585533,
+          "ci_high": 0.3199000629072677,
+          "n": 800
+        },
+        "served_new_ndcg@10": {
+          "mean": 0.21642904932948184,
+          "ci_low": 0.20135509237704557,
+          "ci_high": 0.23218754912150566,
+          "n": 779
+        },
+        "gain_ndcg@10": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800,
+          "significant": false
+        },
+        "gain_ndcg@18": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 800,
+          "significant": false
+        },
+        "gain_served_new_ndcg@10": {
+          "mean": 0.0,
+          "ci_low": 0.0,
+          "ci_high": 0.0,
+          "n": 779,
+          "significant": false
+        }
+      },
+      "all_rated_below_8": {
+        "titles_excluded": {
+          "mean": 90.81,
+          "ci_low": 79.82965625,
+          "ci_high": 103.0300625,
+          "n": 800
+        },
+        "recall@300": {
+          "mean": 0.8122813963414102,
+          "ci_low": 0.7976555289930242,
+          "ci_high": 0.8265466285054778,
+          "n": 800
+        },
+        "ndcg@10": {
+          "mean": 0.3282293286898332,
+          "ci_low": 0.3123178916776792,
+          "ci_high": 0.34433909702891013,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.3482072638557462,
+          "ci_low": 0.3331490186801186,
+          "ci_high": 0.3634553709060411,
+          "n": 800
+        },
+        "served_new_ndcg@10": {
+          "mean": 0.25012417941268933,
+          "ci_low": 0.2340185111313772,
+          "ci_high": 0.26649792540318074,
+          "n": 779
+        },
+        "gain_ndcg@10": {
+          "mean": 0.04542309023034468,
+          "ci_low": 0.039616792606029266,
+          "ci_high": 0.051555552868383876,
+          "n": 800,
+          "significant": true
+        },
+        "gain_ndcg@18": {
+          "mean": 0.04207271559315719,
+          "ci_low": 0.0372097386131922,
+          "ci_high": 0.04679849720146344,
+          "n": 800,
+          "significant": true
+        },
+        "gain_served_new_ndcg@10": {
+          "mean": 0.0336951300832075,
+          "ci_low": 0.02854303215297837,
+          "ci_high": 0.03943638610054361,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "matched_rated_below_8": {
+        "titles_excluded": {
+          "mean": 73.26,
+          "ci_low": 64.45946875000001,
+          "ci_high": 83.04843749999999,
+          "n": 800
+        },
+        "recall@300": {
+          "mean": 0.8086844215323972,
+          "ci_low": 0.7940608577044151,
+          "ci_high": 0.8227495147340304,
+          "n": 800
+        },
+        "ndcg@10": {
+          "mean": 0.31745314093621924,
+          "ci_low": 0.30177521132887586,
+          "ci_high": 0.3329166145329886,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.33796649290528996,
+          "ci_low": 0.3230037023557057,
+          "ci_high": 0.3525810497662089,
+          "n": 800
+        },
+        "served_new_ndcg@10": {
+          "mean": 0.23988647340987387,
+          "ci_low": 0.2239480021467065,
+          "ci_high": 0.2556162730064476,
+          "n": 779
+        },
+        "gain_ndcg@10": {
+          "mean": 0.034646902476730704,
+          "ci_low": 0.029526493181654213,
+          "ci_high": 0.03991731134602316,
+          "n": 800,
+          "significant": true
+        },
+        "gain_ndcg@18": {
+          "mean": 0.03183194464270101,
+          "ci_low": 0.027395745523344957,
+          "ci_high": 0.03618814391831468,
+          "n": 800,
+          "significant": true
+        },
+        "gain_served_new_ndcg@10": {
+          "mean": 0.023457424080392072,
+          "ci_low": 0.018752279921130828,
+          "ci_high": 0.02815611000301207,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "matched_all_watched": {
+        "titles_excluded": {
+          "mean": 124.3475,
+          "ci_low": 113.18509375000001,
+          "ci_high": 136.3905625,
+          "n": 800
+        },
+        "recall@300": {
+          "mean": 0.8179115925500294,
+          "ci_low": 0.804196539448102,
+          "ci_high": 0.831554703767231,
+          "n": 800
+        },
+        "ndcg@10": {
+          "mean": 0.3387812273237582,
+          "ci_low": 0.32296210146182885,
+          "ci_high": 0.35484172705535894,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.3591529837533895,
+          "ci_low": 0.34378761410834713,
+          "ci_high": 0.37384332927264785,
+          "n": 800
+        },
+        "served_new_ndcg@10": {
+          "mean": 0.25773644036516224,
+          "ci_low": 0.24173511073444334,
+          "ci_high": 0.2740259154239187,
+          "n": 779
+        },
+        "gain_ndcg@10": {
+          "mean": 0.055974988864269715,
+          "ci_low": 0.04967080555828622,
+          "ci_high": 0.06221913254599171,
+          "n": 800,
+          "significant": true
+        },
+        "gain_ndcg@18": {
+          "mean": 0.05301843549080056,
+          "ci_low": 0.047427950723456,
+          "ci_high": 0.05824630515958883,
+          "n": 800,
+          "significant": true
+        },
+        "gain_served_new_ndcg@10": {
+          "mean": 0.04130739103568044,
+          "ci_low": 0.03532238394256448,
+          "ci_high": 0.047460558322643016,
+          "n": 779,
+          "significant": true
+        }
+      },
+      "all_watched": {
+        "titles_excluded": {
+          "mean": 154.16625,
+          "ci_low": 140.197125,
+          "ci_high": 169.2239375,
+          "n": 800
+        },
+        "recall@300": {
+          "mean": 0.8227430220802328,
+          "ci_low": 0.808976834644572,
+          "ci_high": 0.8363040969813433,
+          "n": 800
+        },
+        "ndcg@10": {
+          "mean": 0.3603869959234578,
+          "ci_low": 0.34375492322869006,
+          "ci_high": 0.3762669653082437,
+          "n": 800
+        },
+        "ndcg@18": {
+          "mean": 0.37870112455752747,
+          "ci_low": 0.36293353660726374,
+          "ci_high": 0.3940705694222765,
+          "n": 800
+        },
+        "served_new_ndcg@10": {
+          "mean": 0.27748213169228686,
+          "ci_low": 0.2610947679704755,
+          "ci_high": 0.2947816690942593,
+          "n": 779
+        },
+        "gain_ndcg@10": {
+          "mean": 0.07758075746396935,
+          "ci_low": 0.07012861868485354,
+          "ci_high": 0.0854136992520515,
+          "n": 800,
+          "significant": true
+        },
+        "gain_ndcg@18": {
+          "mean": 0.07256657629493843,
+          "ci_low": 0.0660241897876069,
+          "ci_high": 0.0790561919709413,
+          "n": 800,
+          "significant": true
+        },
+        "gain_served_new_ndcg@10": {
+          "mean": 0.06105308236280503,
+          "ci_low": 0.053733721088820637,
+          "ci_high": 0.06842128284360374,
+          "n": 779,
+          "significant": true
+        }
+      }
+    }
+  },
+  "runtime_seconds": 127.3
+}

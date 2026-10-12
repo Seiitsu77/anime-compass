@@ -1,259 +1,256 @@
 # V2.1 model experiment plan
 
-Prioritised challengers, written before any of them is run. Evidence for each
-priority is in [`BASELINE_DIAGNOSIS.md`](BASELINE_DIAGNOSIS.md). Nothing in this
-plan has been executed, and no production artifact changes until a result has
-been reviewed.
+Three controlled experiments, proposed and not run. Evidence for each is in
+[`BASELINE_DIAGNOSIS.md`](BASELINE_DIAGNOSIS.md),
+[`SMALL_PROFILE_EVAL.md`](SMALL_PROFILE_EVAL.md) and
+[`SERIES_POLICY.md`](SERIES_POLICY.md).
 
-## Rules every challenger follows
+The production ALS and LambdaMART artifacts stay as they are. Nothing below is
+trained, promoted, or deployed without a reviewed result.
 
-These are the conditions of entry, not suggestions.
+## What the evidence says to work on
+
+| Finding | Where it bites | Experiment |
+|---|---|---|
+| With 1 to 10 Likes, broad-taste users have 29% to 50% of their hidden positives in the candidate set | Retrieval, small profiles | 1 |
+| 47% of MAL list rows and 45% of ratings are never trained on; dropped titles are liked 6.7% of the time | Training data | 2 |
+| The reranker shows no gain at 5 Likes or fewer, loses at 1, and promotes sequels the feed then removes | Ranking, as served | 3 |
+
+Not on this list, deliberately: a larger or newer model family. For full
+profiles the candidate ceiling is already 0.90 and the loss is in ranking; for
+small profiles the cheap options have not been tried. See "Not scheduled".
+
+## Rules every experiment follows
 
 1. **Equal data, equal protocol.** The baseline is re-scored in the same run,
-   on the same users, with the same known-item rule and candidate budget as the
-   challenger. A number from another report is never the comparison.
-2. **Frozen split.** `holdout_seed42_pos8.sqlite` (SHA-256 `a668114f…`), seed
-   42, positives are ratings of 8 or higher. A challenger that changes what a
-   positive is still reports against this definition as its primary metric.
-3. **Three disjoint populations** drawn by `stable_pick` with a new salt:
-   training, validation (all selection and early stopping), confirmation
-   (opened once). Disjointness is asserted in code.
-4. **An untouched confirmation set.** 7,224 users are already spent: the 3,924
-   in `metadata/inspected_user_ids.json` plus the reranker experiment's 3,300
-   in `results/reranker/confirm_user_ids.json.gz`. A confirmation set excludes
-   all of them. 276,285 eligible users remain untouched.
-5. **A decision rule written before the confirmation set is opened**, in a
-   `PREDECLARATION_<name>.md` next to the results, including what happens if it
-   is not met.
-6. **Paired user-level bootstrap**, 2,000 resamples, 95% percentile interval,
-   for every claimed difference. A delta whose interval includes zero is
-   reported as not demonstrated.
-7. **Report the served condition, not only the benchmark.** Every challenger
-   reports, alongside the benchmark metrics:
-   - NDCG@10, NDCG@18, Recall@10, Recall@18 **as served** (franchise filter on,
-     scored on positives the feed may show);
-   - the **profile-size curve** at K = 1, 3, 5, 10, 20, 50;
-   - distinct items, head/mid/tail share, and the top-20 titles' share of
-     slots at 10 and 18;
-   - p50 and p95 latency per stage through the real serving code, at 3, 60 and
-     500 Likes;
-   - artifact size and cold-start cost.
-8. **No sampled negatives** for selection (Krichene and Rendle, KDD 2020).
+   on the same users, with the same known-item rule and candidate budget. A
+   number from another report is never the comparison.
+2. **Frozen split.** `holdout_seed42_pos8.sqlite`, seed 42, positives are
+   ratings of 8 or higher. A challenger that changes what counts as a positive
+   still reports against this definition as its primary metric.
+3. **Hidden positives stay hidden.** Profiles, features and exclusion lists are
+   built through `protocol.build_case`, which refuses a leak. Anything that
+   reads `animelist.csv` drops held-out (user, title) pairs first; every
+   held-out positive appears there as a completed row.
+4. **An untouched confirmation set, opened once.**
+   - Spent, diagnostics only: 9,224 users (3,924 from earlier experiments,
+     3,300 from the reranker experiment, 2,000 small-profile development users).
+   - **Reserved and unopened:** `populations/small_profile_v1.json` holds 800
+     users for truncated profiles and 500 genuinely light users at each of
+     K = 3, 5, 10, 20.
+   - Training and validation populations are drawn from users that are in
+     neither list (`stack.spent_user_ids`, `stack.reserved_user_ids`), with a
+     new salt, and disjointness is asserted in code.
+   - The reserved set serves the **first** model selection made against the
+     small-profile evaluation. Opening it means setting `reserved_status` in
+     that file, with the decision rule already written. A later experiment
+     reserves its own.
+5. **A decision rule written first**, in a `PREDECLARATION_<name>.md` next to
+   the results, including what happens if it is not met.
+6. **Paired user-level bootstrap**, 2,000 resamples, 95% interval, for every
+   claimed difference. An interval that includes zero is "not demonstrated".
+7. **Report the served condition and the small-profile condition**, not only
+   the benchmark:
+   - NDCG@10, NDCG@18, Recall@10, Recall@18 as served, under the production
+     series policy and under any policy the experiment proposes;
+   - the small-profile table at K = 1, 3, 5, 10, 20, both cohorts;
+   - distinct titles, head share, and the top-20 titles' share of slots;
+   - p50 and p95 latency per stage through the serving code at 3, 60 and 500
+     Likes, artifact size, and cold-start cost.
+8. **No sampled negatives for selection.**
 9. **Offline metrics are proxies.** No result is described as an improvement in
    user satisfaction.
 
-Default promotion gates, unless a predeclaration tightens them:
+Default gates, unless a predeclaration tightens them:
 
 | Gate | Requirement |
 |---|---|
-| Primary | As-served NDCG@10 paired delta with a 95% interval above zero |
-| No regression | Benchmark NDCG@10 and Recall@18 intervals not below zero |
-| Small profiles | No significant loss at any K ≤ 20 |
-| Concentration | Top-20 share of slots and distinct items no worse than baseline by more than 10% relative |
+| Primary | The experiment's own primary metric: paired delta with a 95% interval above zero |
+| No regression | Benchmark NDCG@10 and Recall@18 intervals not below zero for full profiles |
+| Small profiles | No significant loss at any K, in either cohort |
+| Concentration | Top-20 share of slots and distinct titles no worse than baseline by more than 10% relative |
 | Latency | p95 at 60 Likes within +25% of baseline; p95 at 500 Likes under 150 ms |
 | Reproducibility | Deterministic seed, checksummed artifact, role and catalog pins |
 
-## Not being retried
-
-- **Synopsis-similarity fusion.** Rejected; no new hypothesis here.
-- **LightFM-Hybrid.** Rejected; metadata did not help and coverage halved.
-- **Item-item as a fused ranking source.** Cost 9% NDCG@10. Challenger C below
-  is a different hypothesis: candidates only, small profiles only, the
-  reranker decides the order.
-
 ---
 
-## Step 0. Adopt the served-condition measurements (no model change)
+## Experiment 1. Small-profile retrieval
 
-**Why first.** Two of the diagnosis's findings are about measurement, and every
-later decision depends on them: the product-relevant NDCG@10 is 0.216 rather
-than 0.283, and the uniform sample contains no small profile.
+**Question.** Can more of what a new user will like be put in the candidate set
+when the profile is 1 to 10 Likes, without changing anything for larger
+profiles?
 
-**Work.** Move `as_served` and the profile-size curve from
-`experiments/v21_quality/` into the standing evaluation runner so every future
-report carries them. Add a third relevance view that counts validation-holdout
-likes as relevant for final reporting only (19% of top-10 slots are known likes
-currently scored as misses); it is never used for selection.
+**Evidence.** Truncated profiles: Recall@300 is 0.29, 0.37, 0.42, 0.50 at K =
+1, 3, 5, 10, and even 2,000 candidates reach only 0.53 to 0.76. Genuinely light
+users are at 0.66 to 0.78 already, so the headroom is in broad tastes.
 
-**Cost.** About a day. No training, no users spent.
+**Arms, at equal candidate budgets.** Nothing is trained in the first stage.
 
-## A. A reranker trained for the list that is served
-
-**Hypothesis.** The reranker was fitted on full profiles (mean 86 likes) with
-unfiltered labels. Half of its top 10 is then removed by the franchise filter,
-and it shows no held-out gain below 50 Likes. A reranker trained on
-(1) franchise-collapsed candidates with showable labels and (2) profiles
-subsampled to session size will beat the current one as served, most of all at
-K ≤ 20.
-
-**Why it ranks first among model changes.** It targets findings 1 and 3
-together, needs no ALS retraining, fits in seconds, and changes no serving code
-path: same features, same artifact format.
-
-**Arms.** Current LambdaMART; retrained on collapsed labels only; retrained on
-subsampled profiles only; both. Same 18 features, same hyperparameters.
-
-**Data.** 2,000 fresh training users, each contributing its full profile plus
-subsamples at K = 3, 10, 30; 500 validation; 800 confirmation.
-
-**Primary metric.** As-served NDCG@10 averaged over K ∈ {3, 10, 20} and the full
-profile, equal weight.
-
-**Risks.** Label sparsity at small K; a model that helps small profiles and
-hurts large ones, which the per-K gate catches.
-
-**Cost.** One to two days.
-
-## B. Explicit negative and "already seen" signal
-
-**Hypothesis.** Knowing what a user has watched and not loved is worth +0.045
-NDCG@10 as an exclusion alone. Using it also as a ranking signal (similarity of
-a candidate to the user's low-rated titles) adds a further gain on top of
-exclusion.
-
-**Arms.** (1) Baseline. (2) Exclusion only: remove titles rated below 8 from
-candidates, which is the published protocol and is already measured.
-(3) Exclusion plus three reranker features: maximum item-item similarity to a
-title the user rated 5 or lower, the same against 6-to-7 titles, and genre
-overlap with the low-rated set.
-
-**Equal-data baseline.** Arm 2, not arm 1. The question is what the features
-add once exclusion is granted.
-
-**Product dependency.** The live browser can supply this signal only through
-Not Interested today. Offline evidence for arm 2 is the case for adding an
-"Already Watched" action to the React frontend, which the legacy frontend had
-as `seen_titles`. That is a product decision to take with this number in hand,
-not a model change.
-
-**Cost.** Two days offline. The frontend action is separate work.
-
-## C. Wider retrieval for small profiles only
-
-**Hypothesis.** With ten or fewer Likes, ALS top 300 contains under half of the
-held-out positives, and item-item neighbours of those few titles recover
-positives ALS misses. Adding item-item candidates for small profiles, leaving
-the reranker to order them, raises as-served NDCG@10 at K ≤ 10 without
-affecting large profiles.
-
-**Why this is not the rejected experiment.** Item-item was rejected as a fused
-ranking source across all users. Here it only widens the candidate set, only
-below a profile-size threshold, and never contributes a score to the ranking.
-
-**Arms at equal candidate budget.** ALS 300; ALS 500; ALS 300 + item-item 200,
-for K ≤ 10 only. Depth 500 for ALS alone is included so that a gain is
-attributable to the source and not to the budget.
-
-**Stop condition.** If union recall at K ≤ 10 does not exceed ALS at the same
-budget by a significant margin on validation, stop before fitting anything.
-
-**Risks.** The reranker has never seen candidates from outside ALS top 300 and
-refuses unknown rows by design; candidates must be scored by ALS as well. Rerank
-latency grows with the candidate count.
-
-**Cost.** One day to the stop condition; three more if it passes.
-
-## D. Status-aware, confidence-weighted ALS
-
-**Hypothesis.** Training on completed-and-rated titles discards 47% of the
-list. Adding completed-but-unrated and in-progress titles at reduced
-confidence, and treating dropped titles as known rather than unobserved,
-improves retrieval for medium and small profiles and for mid-popularity titles.
-
-**Evidence.** Dropped titles are liked 6.7% of the time; in-progress titles
-62.5%; 10.5M completed titles carry no rating at all.
-
-**Arms, identical hyperparameters to the frozen reference** (128 factors,
-alpha 5.0, regularisation 0.05, 15 iterations, seed 42) so that only the data
-changes:
-
-| Arm | Confidence |
+| Arm | Candidates |
 |---|---|
-| Baseline | `1 + α` for train positives (rebuilt in the same run) |
-| D1 | + completed-unrated at reduced confidence |
-| D2 | D1 + currently watching, scaled by progress |
-| D3 | D2, and dropped titles excluded from candidates as known items |
+| Baseline | ALS top 300 |
+| Depth control | ALS top 500, and ALS top 1000 |
+| Item-item union | ALS 300 + item-item neighbours of the K Liked titles, to 500 and 1000 |
+| Popularity-prior union | ALS 300 + the most-liked titles among users who liked any of the K, to 500 |
+| Size-gated | The best union below a profile-size threshold, ALS alone above it |
 
-Reduced-confidence weights are chosen on validation users only.
+The depth controls are there so that a gain is attributable to the source and
+not to the budget.
+
+**Why item-item here is not the rejected experiment.** It was rejected as a
+fused ranking source for all users (−9% NDCG@10). Here it only widens the
+candidate set, only for small profiles, and contributes no score.
+
+**Primary metric.** Recall at the candidate budget, truncated cohort, averaged
+over K ∈ {1, 3, 5, 10}.
+
+**Stage gate.** If no union beats ALS at the same budget with a significant
+paired margin on validation users, stop. Recall that does not move cannot move
+ranking.
+
+**Second stage, only if the gate passes.** Rank the widened set. The reranker
+refuses candidates it has no ALS score for, so every candidate is scored by ALS
+first. Report as-served NDCG@10 at each K against the baseline, plus rerank
+latency, which grows with the candidate count.
+
+**Confirmation.** The reserved truncated and natural sets, opened once, for the
+size-gated arm chosen on validation.
+
+**Risks.** A wider set full of popular titles raises recall and concentration
+together; the concentration gate is the check. A gain for truncated profiles
+and none for natural ones is still a result worth having.
+
+**Cost.** One to two days to the stage gate; three more beyond it.
+
+## Experiment 2. Status-aware, confidence-weighted ALS
+
+**Question.** Does training on what users started, finished without rating, or
+dropped improve retrieval, most of all for small and medium profiles and for
+mid-popularity titles?
+
+**Evidence.** The models train on completed-and-rated titles, 52.8% of the MAL
+list. Left out: 10.5M completed-unrated rows, 8.9M in progress or on hold, 4.3M
+dropped. Like-rates when rated: in progress 62.5%, completed 54.0%, on hold
+41.9%, dropped 6.7%.
+
+**Arms.** Identical hyperparameters to the frozen reference (128 factors,
+alpha 5.0, regularisation 0.05, 15 iterations, seed 42), so that only the
+training data changes.
+
+| Arm | Training matrix |
+|---|---|
+| Baseline | Train positives at confidence `1 + α`, **rebuilt in the same run** |
+| 2a | + completed-unrated at reduced confidence |
+| 2b | 2a + in-progress titles, confidence scaled by share of episodes watched |
+| 2c | 2b, and dropped titles treated as known rather than unobserved |
+
+Reduced-confidence weights are chosen on validation users only, from a small
+predeclared grid.
 
 **Leakage control, mandatory.** Every held-out validation and test positive is
-also a completed row in `animelist.csv`. The training matrix must drop those
-(user, title) pairs. A unit test asserts that no held-out pair is present, and
-the artifact records the split hash as the existing one does.
+a completed row in `animelist.csv`. The matrix builder drops those (user,
+title) pairs, a unit test asserts none is present, and the artifact records the
+split hash as the existing one does. Evaluation users' in-progress and dropped
+rows are inputs like any other; their held-out positives are not.
 
-**Equal-data baseline.** The frozen reference rebuilt in the same run from the
-same row scan, not the stored artifact.
+**Primary metric.** Recall@300 on the small-profile evaluation, truncated
+cohort, averaged over K. Secondary: full-profile Recall@300, and recall of
+mid-popularity positives, which is 3.4% today.
 
-**Cost.** About 5 minutes per ALS build, a 2 GB scan per matrix, three to four
-days in total. Retraining is the reason this sits below A to C.
+**What it must not be judged on.** The current reranker was fitted to the
+current ALS scores. Ranking metrics for a new retriever are reported with ALS
+order and with a reranker refitted on the new scores, never with the old
+reranker over new scores.
 
-## E. Per-user normalised preference strength
+**Confirmation.** A newly reserved set, since the first is spent on experiment 1
+or 3, whichever selects first.
 
-**Hypothesis.** A fixed threshold treats a 7 from a harsh rater and an 8 from
-someone who gives everything 8 identically wrong. Graded confidence from a
-per-user standardised rating ranks better than a binary positive.
+**Cost.** About five minutes per ALS build plus a 2 GB scan per matrix; three
+to four days in total. Retraining is why this is second.
 
-**Evidence.** 16.1% of positives are at or below the rater's own mean; 19.6%
-of 6-or-7 ratings are above it; for a quarter of users the threshold selects
-80% or more of everything they rated.
+## Experiment 3. A reranker trained for the list that is served
 
-**Arms.** Baseline binary confidence; `c = 1 + α·g(z)` with `g` a clipped,
-monotone function of the user-standardised rating, positives unchanged; the
-same with above-mean 6-or-7 ratings admitted as weak positives.
+**Question.** Does a reranker fitted to the served policy and to small profiles
+beat the current one as served, and stop being harmful at one Like?
 
-**Primary metric stays threshold 8**, so results remain comparable with every
-earlier report. Relevance by the relative definition is reported as a secondary
-view and never used for selection.
+**Evidence.**
+- At 5 Likes or fewer the reranker has no measurable gain; at 1 it is
+  significantly worse than ALS (−0.008 NDCG@10, truncated).
+- 51% of its top-10 slots are in an already-Liked franchise, which the feed
+  removes. Without that filter it is significantly worse than ALS at finding
+  positives in new franchises (−0.016).
+- It was fitted on full profiles averaging 86 Likes, with unfiltered labels.
 
-**Risk.** A per-user mean needs enough ratings to mean anything; users with
-fewer than ten ratings keep the binary rule.
+**Arms.** Same 18 features, same LightGBM hyperparameters, same ALS candidates.
 
-**Cost.** Three days. Shares the matrix builder with D.
+| Arm | Training change |
+|---|---|
+| Baseline | Current LambdaMART |
+| ALS only | No reranker, as a floor |
+| 3a | Labels and candidates as served: Liked-franchise entries removed, one per franchise |
+| 3b | Profiles subsampled to K ∈ {1, 3, 5, 10, 20} alongside the full profile |
+| 3c | 3a and 3b together |
+| Size-routed | ALS order below a profile-size threshold, the best reranker above it |
 
-## F. A discovery target from Plan to Watch (measurement)
+**Dependency on the series policy.** 3a is fitted for one policy. If the policy
+experiment in `SERIES_POLICY.md` changes what is served, 3a is refitted for
+that policy; the arms are written so the policy is a parameter.
 
-**Hypothesis.** A recommender's job is to surface unseen titles a user would
-choose. 27.9M Plan to Watch rows from 90% of users are exactly that, and they
-are untouched by the current benchmark, which rewards reconstructing what was
-already watched.
+**Primary metric.** As-served NDCG@10 averaged over K ∈ {1, 3, 5, 10, 20} and
+the full profile, equal weight, truncated and natural cohorts both reported.
 
-**Work.** Define "intent recall at K": the share of a user's planned titles in
-the top K, with all watched titles excluded. Report it for the baseline first.
-It is a second lens, not a replacement for held-out likes, and it mirrors the
-product's Want to Watch.
+**Extra gate.** No significant loss against ALS-only at K = 1 or K = 3. Today's
+reranker fails this gate.
 
-**Caveat to keep visible.** A planned title is intent, not a confirmed like:
-of the 1% that carry a rating, 61.8% are 8 or higher.
+**Confirmation.** The reserved small-profile sets, if this experiment selects
+before experiment 1 does.
 
-**Cost.** Two days. No model change.
+**Why it is cheap.** No ALS retraining, fits in seconds, same artifact format,
+no serving code path changes except the optional size route.
 
-## G. LightGCN or an autoencoder
+**Cost.** Two to three days.
 
-**Not justified yet.** For full profiles the candidate ceiling is 0.90 and the
-loss is in ranking; a stronger retriever does not address that. For small
-profiles retrieval is the constraint, but A, C and D attack it at a fraction
-of the cost.
+## Order
 
-**Entry condition.** Revisit only if, after C and D, recall at 300 for K ≤ 10
-is still below 0.55 and the as-served gate has not been met. The first
-candidate would then be an item-based autoencoder scored on the profile-size
-curve, with the serving-memory cost of an 18,064 × 18,064 item matrix stated
-up front.
+Experiment 3 is the cheapest and addresses a measured harm (the reranker at one
+Like), so it runs first. Experiment 1's first stage trains nothing and can run
+alongside it. Experiment 2 follows, because it retrains ALS and its results
+decide whether the reranker needs refitting again.
 
----
+| Order | Experiment | Trains | First result |
+|---|---|---|---|
+| 1st | 3. Served-policy reranker | LightGBM, seconds | 2–3 days |
+| alongside | 1. Small-profile retrieval, stage one | nothing | 1–2 days |
+| then | 2. Status-aware ALS | ALS rebuilds | 3–4 days |
 
-## Order and expected value
+## Product experiments this plan depends on
 
-| # | Work | Trains a model | Addresses | Cost |
-|---|---|---|---|---|
-| 0 | Served-condition measurements | no | measurement | 1 day |
-| A | Reranker for the served list and small profiles | LightGBM, seconds | findings 1, 3 | 1–2 days |
-| B | Negative and seen signal | LightGBM, seconds | finding 2 | 2 days |
-| C | Wider retrieval for small profiles | no | finding 1 | 1–4 days |
-| F | Plan to Watch discovery target | no | measurement | 2 days |
-| D | Status-aware ALS | ALS rebuilds | findings 1, 5 | 3–4 days |
-| E | Per-user normalised confidence | ALS rebuilds | finding 5 | 3 days |
-| G | LightGCN or autoencoder | yes | gated on C, D | not scheduled |
+These are not model experiments and offline numbers cannot settle them.
 
-Each confirmation consumes 800 untouched users. Running A through E end to end
-uses roughly 4,000 of the 276,285 remaining.
+- **Series policy.** `dedupe_liked1` against `production`: one entry from a
+  Liked franchise per batch instead of none. Offline it is +0.052 NDCG@10 for
+  4% fewer new-franchise hits on full profiles, and +0.08 to +0.12 for light
+  users. Whether users want the sequel shown is a question for an online
+  comparison.
+- **Already Watched uptake.** Now in the interface. Its ceiling offline is
+  +0.035 NDCG@10 for low-rated history and +0.056 for all watched history, at a
+  matched rate. What users actually mark decides how much of that is real.
+
+## Not scheduled
+
+- **LightGCN, a neural autoencoder, or a generative recommender.** None is
+  assumed to help. For full profiles a perfect reorder of the existing 300
+  candidates would score 0.90, so a stronger retriever does not address the
+  loss. For small profiles, retrieval is the constraint, but experiments 1 and
+  2 attack it for days of work rather than a new serving stack. A new family is
+  revisited only if, after both, Recall@300 for truncated K ≤ 10 is still below
+  0.55, and then it enters under the same rules, with its serving memory and
+  latency stated before any training.
+- **Synopsis-similarity fusion, LightFM-Hybrid.** Rejected earlier; no new
+  hypothesis.
+- **Per-user normalised preference strength.** Still plausible (16% of
+  positives are at or below the rater's own mean) and shares a matrix builder
+  with experiment 2. It follows experiment 2 rather than competing with it.
+- **A Plan to Watch discovery target.** A measurement, not a model: 9.2% of
+  new-franchise recommendations are already on the user's Plan to Watch list.
+  Worth adding to the evaluation as a second lens when experiment 2 reports.

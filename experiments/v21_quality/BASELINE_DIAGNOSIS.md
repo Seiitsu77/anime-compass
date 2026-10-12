@@ -7,6 +7,14 @@ artifact was touched.
 Offline metrics are engineering proxies. NDCG on held-out ratings is not user
 satisfaction, and nothing below should be read as a claim about it.
 
+Three sections here were followed up and are refined elsewhere:
+
+| Section | Refined in | What changed |
+|---|---|---|
+| 5, small profiles | [`SMALL_PROFILE_EVAL.md`](SMALL_PROFILE_EVAL.md) | A dedicated evaluation with a second, genuinely light cohort. The 0.27 to 0.44 recall below is the floor of a range, not the typical case |
+| 6, hard exclusions | [`SERIES_POLICY.md`](SERIES_POLICY.md) | The +0.045 is +0.035 once low-rated history is hidden at the same rate as positives |
+| 7, `one_per_series` | [`SERIES_POLICY.md`](SERIES_POLICY.md) | The flag is two rules. De-duplication costs 0.009; removing Liked franchises accounts for the rest |
+
 ## Protocol
 
 | | |
