@@ -31,6 +31,11 @@ coverage.xml
 tests
 docs
 
+# Offline model experiments never ship. The React source is not built by this
+# image yet; its dependency tree must not be copied in either way.
+experiments
+frontend-react/node_modules
+
 # Raw and intermediate datasets. Runtime artifacts are downloaded at startup
 # and verified against data/artifacts.manifest.json, so they must not be baked
 # into the build context (archive/ alone is ~2.7 GB).

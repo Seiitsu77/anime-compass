@@ -34,3 +34,25 @@ def test_cleanup_removes_expired_sessions(tmp_path: Path) -> None:
         assert database.get(AnonymousSession, "expired-session") is None
 
     sessions.engine.dispose()
+
+
+def test_replacing_preferences_keeps_the_agent_conversation_context(tmp_path: Path) -> None:
+    """A browser profile sync must not erase what a follow-up refers to."""
+    sessions = repository(tmp_path)
+    sessions.update(
+        "chat-session",
+        {
+            "liked_titles": ["Death Note"],
+            "last_recommendations": ["Death Parade", "Ghost Hunt"],
+            "last_recommendation_intent": {"include_genres": ["Supernatural"], "top_k": 2},
+        },
+    )
+
+    profile = sessions.update("chat-session", {"replace": True, "liked_titles": ["Ghost Hunt"]})
+
+    assert profile["liked_titles"] == ["Ghost Hunt"], "replace still swaps the preferences"
+    assert profile["last_recommendations"] == ["Death Parade", "Ghost Hunt"]
+    assert profile["last_recommendation_intent"] == {"include_genres": ["Supernatural"], "top_k": 2}
+
+    assert sessions.update("chat-session", {"reset": True}) == empty_profile()
+    sessions.engine.dispose()

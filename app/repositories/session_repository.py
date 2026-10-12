@@ -136,7 +136,18 @@ class SQLiteSessionRepository:
             if record is None:
                 record = AnonymousSession(session_id=session_id, profile_json=json.dumps(empty_profile()))
                 database.add(record)
-            current = empty_profile() if patch.get("replace") else self._decode_profile(record.profile_json)
+            stored = self._decode_profile(record.profile_json)
+            if patch.get("replace"):
+                # `replace` swaps the browser's preferences wholesale. The agent's
+                # conversation context is not a preference: the browser never
+                # holds it, so a profile sync after a Like used to erase what
+                # "more like the second one" refers to. It survives unless the
+                # patch sets it, and `reset` still clears everything.
+                current = empty_profile()
+                for field in SESSION_CONTEXT_FIELDS:
+                    current[field] = stored[field]
+            else:
+                current = stored
             profile = self._apply_patch(current, patch)
             record.profile_json = json.dumps(profile, ensure_ascii=False, separators=(",", ":"))
             record.updated_at = datetime.now(timezone.utc)

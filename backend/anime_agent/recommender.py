@@ -394,6 +394,25 @@ def positive_score(value: float | None) -> float:
     return max(0.0, min(1.0, float(value)))
 
 
+# MyAnimeList positions start at 1. The source data writes 0 for a title that
+# has no position at all, and an ascending sort then put that title first: an
+# unranked one-member entry led "Popular in the catalog".
+POSITIONAL_SORT_FIELDS = frozenset({"popularity", "rank"})
+
+
+def _has_sort_value(item: Mapping[str, Any], sort_by: str) -> bool:
+    """Whether `item` can be ordered by `sort_by`, or belongs after those that can."""
+    value = item.get(sort_by)
+    if value is None or value == "":
+        return False
+    if sort_by in POSITIONAL_SORT_FIELDS:
+        try:
+            return float(value) > 0
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 def normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     cleaned = {channel: max(0.0, float(weights.get(channel, 0.0))) for channel in DEFAULT_CHANNEL_WEIGHTS}
     total = sum(cleaned.values())
@@ -698,8 +717,8 @@ class AnimeRecommender:
         if sort_by == "relevance":
             scored.sort(key=lambda row: (row[0], self._quality_bonus(row[1])), reverse=order == "desc")
         else:
-            present = [row for row in scored if row[1].get(sort_by) not in (None, "")]
-            missing = [row for row in scored if row[1].get(sort_by) in (None, "")]
+            present = [row for row in scored if _has_sort_value(row[1], sort_by)]
+            missing = [row for row in scored if not _has_sort_value(row[1], sort_by)]
             present.sort(key=lambda row: (str(row[1].get("title") or "").casefold(), int(row[1]["id"])))
             present.sort(key=lambda row: row[1][sort_by], reverse=order == "desc")
             missing.sort(key=lambda row: (str(row[1].get("title") or "").casefold(), int(row[1]["id"])))
@@ -776,8 +795,8 @@ class AnimeRecommender:
                 continue
             candidates.append(item)
 
-        present = [item for item in candidates if item.get(sort_by) not in (None, "")]
-        missing = [item for item in candidates if item.get(sort_by) in (None, "")]
+        present = [item for item in candidates if _has_sort_value(item, sort_by)]
+        missing = [item for item in candidates if not _has_sort_value(item, sort_by)]
         present.sort(key=lambda item: (str(item.get("title") or "").casefold(), int(item["id"])))
         present.sort(key=lambda item: item[sort_by], reverse=order == "desc")
         missing.sort(key=lambda item: (str(item.get("title") or "").casefold(), int(item["id"])))

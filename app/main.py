@@ -162,6 +162,7 @@ def create_app(
                     diversity_strength=settings.fast_path_diversity_strength,
                     diversity_window=settings.fast_path_diversity_window,
                 ),
+                debug_diagnostics=settings.recommendation_debug_diagnostics,
             ),
             sessions=sessions,
             entity_resolver=resolver,

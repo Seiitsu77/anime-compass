@@ -108,6 +108,12 @@ class Settings(BaseSettings):
     # Diversity is off by default: ALS costs 2.97% ILD for a 73% relevance gain.
     fast_path_diversity_strength: float = 0.0
     fast_path_diversity_window: int = 30
+    # Developer-only. Adds a `debug` block to fast-path diagnostics: a digest and
+    # norm of the folded-in ALS user vector plus the leading candidate IDs before
+    # and after reranking, which is enough to confirm that a Like moved the
+    # profile and the ranking. Off in production: the block describes one
+    # person's taste profile and has no business in a public response.
+    recommendation_debug_diagnostics: bool = False
 
     @field_validator("cors_origins", mode="before")
     @classmethod

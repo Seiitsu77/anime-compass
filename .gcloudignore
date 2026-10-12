@@ -63,6 +63,8 @@ Thumbs.db
 # Not part of the runtime image; .dockerignore excludes them as well
 /tests/
 /docs/
+/experiments/
+/frontend-react/node_modules/
 
 # Raw and intermediate data. Serving artifacts come from the Hugging Face
 # Dataset during the build; only their manifest is uploaded.

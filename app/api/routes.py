@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.dependencies import container, startup
 from app.api.schemas import (
+    RECOMMEND_REQUEST_LIMITS,
     ChatRequest,
     ChatResponse,
     EntitySearchRequest,
@@ -143,7 +144,10 @@ async def update_session(
     request: SessionPreferenceUpdate,
     state: Container,
 ) -> dict[str, Any]:
-    profile = await asyncio.to_thread(state.sessions.update, session_id, request.model_dump())
+    # Only what the caller sent. Dumping defaults turned every omitted field into
+    # an explicit empty value, which cleared the agent's conversation context on
+    # each preference update.
+    profile = await asyncio.to_thread(state.sessions.update, session_id, request.model_dump(exclude_unset=True))
     await asyncio.to_thread(state.sessions.log_event, session_id, "feedback", "preferences_updated", {})
     return {"session_id": session_id, "profile": profile}
 
@@ -161,7 +165,7 @@ async def legacy_get_session(state: Container, session_id: str = Query(default="
 
 @router.post("/session/preferences", include_in_schema=False)
 async def legacy_update_session(request: LegacySessionPreferenceUpdate, state: Container) -> dict[str, Any]:
-    payload = request.model_dump(exclude={"session_id"})
+    payload = request.model_dump(exclude={"session_id"}, exclude_unset=True)
     profile = await asyncio.to_thread(state.sessions.update, request.session_id, payload)
     await asyncio.to_thread(state.sessions.log_event, request.session_id, "feedback", "preferences_updated", {})
     return {"session_id": request.session_id, "profile": profile}
@@ -272,6 +276,9 @@ async def health(init: Startup) -> dict[str, Any]:
             "retriever": "als" if als_index is not None else "countsketch",
             "reranker": "lambdamart" if reranker is not None else "none",
             "reranker_active": reranker is not None,
+            # Advertised so a client can truncate an oversized profile visibly
+            # instead of having the request rejected or a preference dropped.
+            "request_limits": dict(RECOMMEND_REQUEST_LIMITS),
         },
         "agent": {
             "provider": selected["provider"] if selected else "deterministic",

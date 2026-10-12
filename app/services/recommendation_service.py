@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
 from collections import OrderedDict
+from collections.abc import Iterable
 from typing import Any
+
+import numpy as np
 
 from app.api.schemas import RecommendRequest
 from app.core.errors import AppError
@@ -16,6 +20,13 @@ from backend.anime_agent.path_policy import RecommendationPath, choose_recommend
 from backend.anime_agent.recommender import AnimeRecommender, series_key
 
 logger = logging.getLogger("anime_compass.recommendation")
+
+# How many leading IDs the developer-only debug block reports per stage.
+DEBUG_TOP_IDS = 20
+
+
+def _title_key(value: Any) -> str:
+    return " ".join(str(value).casefold().split())
 
 
 class RecommendationService:
@@ -28,6 +39,7 @@ class RecommendationService:
         fallback_index: Any | None = None,
         tail_index: Any | None = None,
         fast_path_config: FastPathConfig | None = None,
+        debug_diagnostics: bool = False,
     ):
         self.recommender = recommender
         self.sessions = sessions
@@ -38,6 +50,9 @@ class RecommendationService:
         self.fallback_index = fallback_index
         self.tail_index = tail_index
         self.fast_path_config = fast_path_config or FastPathConfig()
+        # Developer-only: see Settings.recommendation_debug_diagnostics.
+        self.debug_diagnostics = debug_diagnostics
+        self._title_ids: dict[str, tuple[int, ...]] | None = None
         self._cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
         self._cache_ttl_seconds = 45.0
         self._cache_size = 128
@@ -66,6 +81,8 @@ class RecommendationService:
                             "path": "fast",
                             "collaborative_route": fast["diagnostics"].get("collaborative_route"),
                             "candidate_pool_size": fast["diagnostics"].get("candidate_pool_size"),
+                            "known_positive_count": fast["diagnostics"].get("known_positive_count"),
+                            "excluded_count": fast["diagnostics"].get("excluded_count"),
                             "tail_source_used": fast["diagnostics"].get("tail_source_used"),
                             "result_count": len(fast["results"]),
                             "duration_ms": fast["timing_ms"],
@@ -190,9 +207,30 @@ class RecommendationService:
         assert self.als_index is not None
         positives = [int(value) for value in request.liked_ids]
         positives.extend(int(value) for value in session_profile.get("liked_ids", []) or [])
+        positives = list(dict.fromkeys(positives))
         excluded = [int(value) for value in request.excluded_ids]
         excluded.extend(int(value) for value in session_profile.get("disliked_ids", []) or [])
         excluded.extend(int(value) for value in session_profile.get("watched_ids", []) or [])
+
+        # Negative feedback is stored by title: the browser's legacy session
+        # schema and the agent both record disliked, hidden, and seen titles as
+        # strings. The fast path used to read IDs only, so on the default
+        # personalized route a "not interested" title was dropped by the
+        # constraint-rich Hybrid and by the browser, but not here.
+        excluded_titles = [
+            *request.excluded_titles,
+            *request.seen_titles,
+            *(session_profile.get("excluded_titles", []) or []),
+            *(session_profile.get("seen_titles", []) or []),
+            *(session_profile.get("disliked_titles", []) or []),
+        ]
+        title_ids, unresolved_titles = self._exact_title_ids(excluded_titles)
+        excluded.extend(title_ids)
+        # A liked title is a profile input and never a recommendation. ALS masks
+        # its own positives, but that is one source's behaviour; stating it here
+        # makes the guarantee hold for the fallback and tail sources too.
+        excluded.extend(positives)
+        excluded = list(dict.fromkeys(excluded))
 
         # `one_per_series` is part of the request contract, and the fast path was
         # silently ignoring it: liking Steins;Gate returned three Steins;Gate
@@ -231,6 +269,21 @@ class RecommendationService:
 
         diagnostics = {**result.diagnostics, **path_decision.as_dict()}
         diagnostics["artifact_versions"] = self._artifact_versions()
+        # Counts only, so they are safe in any environment. They answer "did my
+        # feedback reach the ranker?" without revealing what the feedback was.
+        known_to_model = self.als_index.index_by_id
+        diagnostics["profile"] = {
+            "liked_ids_received": len(request.liked_ids),
+            "positives_used": len(positives),
+            "positives_known_to_model": sum(1 for value in positives if value in known_to_model),
+            "excluded_ids_received": len(request.excluded_ids),
+            "excluded_titles_received": len({_title_key(value) for value in excluded_titles if str(value).strip()}),
+            "excluded_titles_resolved": len(title_ids),
+            "excluded_titles_unresolved": unresolved_titles,
+            "series_collapsed": bool(request.one_per_series),
+        }
+        if self.debug_diagnostics:
+            diagnostics["debug"] = self._debug_block(positives, excluded, result, ranked_ids)
         return {
             "query": request.model_dump(exclude={"liked_ids", "excluded_ids", "weights", "session_profile", "limit"}),
             "resolved_titles": [],
@@ -240,6 +293,59 @@ class RecommendationService:
             "diagnostics": diagnostics,
             "cache_hit": False,
         }
+
+    def _exact_title_ids(self, titles: Iterable[Any]) -> tuple[list[int], int]:
+        """Catalog IDs whose title equals a requested title, and the miss count.
+
+        Exact, case-insensitive matching on purpose. `resolve_titles` takes the
+        top fuzzy search hit, which is right for "more like X" and wrong for an
+        exclusion: a near miss would hide a title the user never rejected. It is
+        also a catalog scan per title, where this is one dictionary lookup.
+        """
+        if self._title_ids is None:
+            index: dict[str, list[int]] = {}
+            for item in self.recommender.catalog:
+                key = _title_key(item.get("title") or "")
+                if key:
+                    index.setdefault(key, []).append(int(item["id"]))
+            self._title_ids = {key: tuple(values) for key, values in index.items()}
+        resolved: list[int] = []
+        unresolved = 0
+        for key in dict.fromkeys(_title_key(value) for value in titles):
+            if not key:
+                continue
+            matches = self._title_ids.get(key)
+            if matches is None:
+                unresolved += 1
+            else:
+                resolved.extend(matches)
+        return list(dict.fromkeys(resolved)), unresolved
+
+    def _debug_block(
+        self,
+        positives: list[int],
+        excluded: list[int],
+        result: Any,
+        returned_ids: list[int],
+    ) -> dict[str, Any]:
+        """Evidence that a profile change moved the model, for developers.
+
+        The digest is of the folded-in user vector, so two requests with the
+        same likes agree and any Like or Unlike the model knows about changes
+        it. The ID lists show the same thing one stage later: what ALS
+        retrieved, and what the reranker did with it.
+        """
+        assert self.als_index is not None
+        block: dict[str, Any] = {"als_user_vector_sha256_16": None, "als_user_vector_norm": None}
+        vector = self.als_index.user_vector(positives)
+        if vector is not None:
+            rounded = np.round(np.asarray(vector, dtype=np.float32), 5).astype("<f4")
+            block["als_user_vector_sha256_16"] = hashlib.sha256(rounded.tobytes()).hexdigest()[:16]
+            block["als_user_vector_norm"] = round(float(np.linalg.norm(vector)), 6)
+        block["als_retrieved_top_ids"] = self.als_index.top_candidates(positives, DEBUG_TOP_IDS, excluded_ids=excluded)
+        block["reranked_top_ids"] = [candidate.anime_id for candidate in result.candidates[:DEBUG_TOP_IDS]]
+        block["returned_ids"] = list(returned_ids)
+        return block
 
     def _artifact_versions(self) -> dict[str, Any]:
         """Version metadata so a served result is traceable to its artifacts."""

@@ -5,6 +5,26 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# Per-request ceilings for the personalized feed. They are advertised through
+# /api/health so a browser profile larger than a ceiling is truncated visibly by
+# the client instead of being rejected with a 422 or silently ignored.
+#
+# The liked ceiling was 50, which meant the 51st and later likes never reached
+# the ALS fold-in. The exclusion ceiling was 100, which is fewer than six 18-title
+# batches, so "already shown" could not be expressed past the sixth page.
+MAX_LIKED_IDS = 500
+MAX_EXCLUDED_IDS = 2000
+MAX_EXCLUDED_TITLES = 500
+MAX_SEEN_TITLES = 500
+
+RECOMMEND_REQUEST_LIMITS: dict[str, int] = {
+    "liked_ids": MAX_LIKED_IDS,
+    "excluded_ids": MAX_EXCLUDED_IDS,
+    "excluded_titles": MAX_EXCLUDED_TITLES,
+    "seen_titles": MAX_SEEN_TITLES,
+    "results": 50,
+}
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -88,11 +108,11 @@ class AnimeRecommendation(BaseModel):
 class RecommendRequest(ApiModel):
     session_id: str = Field(default="", max_length=128)
     reference_titles: list[str] = Field(default_factory=list, max_length=20)
-    liked_ids: list[int] = Field(default_factory=list, max_length=50)
+    liked_ids: list[int] = Field(default_factory=list, max_length=MAX_LIKED_IDS)
     liked_titles: list[str] = Field(default_factory=list, max_length=50)
-    excluded_ids: list[int] = Field(default_factory=list, max_length=100)
-    excluded_titles: list[str] = Field(default_factory=list, max_length=100)
-    seen_titles: list[str] = Field(default_factory=list, max_length=200)
+    excluded_ids: list[int] = Field(default_factory=list, max_length=MAX_EXCLUDED_IDS)
+    excluded_titles: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDED_TITLES)
+    seen_titles: list[str] = Field(default_factory=list, max_length=MAX_SEEN_TITLES)
     genres: list[str] = Field(default_factory=list, max_length=30)
     include_genres: list[str] = Field(default_factory=list, max_length=30)
     exclude_genres: list[str] = Field(default_factory=list, max_length=30)
