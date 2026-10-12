@@ -1,4 +1,4 @@
-# Anime Compass V2 — React + Vite prototype
+# Anime Compass V2.1 — React + Vite
 
 A separate, **not deployed** white-and-lavender frontend prototype, built after reviewing the existing `Seiitsu77/anime-compass` GitHub source. The existing FastAPI API, Gemini Agent and ALS/LambdaMART ranking are reused. No model artifact is changed by this frontend; the V2.1 work did change request handling in the API, listed under [V2.1](#v21-feedback-semantics-and-correctness).
 
@@ -21,7 +21,9 @@ npm test
 npm run build
 ```
 
-The result of `npm run build` is in `dist/`. Do not deploy this prototype without integration testing.
+The result of `npm run build` is in `dist/`. The Cloud Run image builds this
+bundle from the lockfile and serves it through FastAPI. CI and the Cloud Build
+candidate check verify production integration before deployment.
 
 ## Pages
 

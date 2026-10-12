@@ -18,6 +18,18 @@ steps:
       - --tag=${_IMAGE}
       - .
 
+  # Run the exact candidate with no credentials or network before publishing it.
+  - id: production-check
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - --network=none
+      - --entrypoint=python
+      - ${_IMAGE}
+      - scripts/check_production_deployment.py
+      - --self-hosted
+
 # Listed here rather than pushed from a step, so Cloud Build pushes only after
 # every step has succeeded and records the pushed digest in the build result.
 images:

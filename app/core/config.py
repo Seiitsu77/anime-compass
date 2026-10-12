@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     app_host: str = "127.0.0.1"
     app_port: int = Field(default=8000, ge=1, le=65535)
+    frontend_dir: Path = PROJECT_ROOT / "frontend"
     cors_origins: Annotated[list[str], NoDecode] = ["http://127.0.0.1:8000", "http://localhost:8000"]
     database_url: str = "sqlite:///data/anime_compass.db"
     session_retention_days: int = Field(default=30, ge=1, le=365)
@@ -134,6 +135,7 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "frontend_dir",
         "semantic_artifact_path",
         "collaborative_artifact_path",
         "als_artifact_path",

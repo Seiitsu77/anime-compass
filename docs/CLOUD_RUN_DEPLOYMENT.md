@@ -8,6 +8,20 @@ LightGBM.
 
 ## What gets deployed
 
+V2.1 builds the React UI in a Node 22 stage with `npm ci` and `npm run build`.
+FastAPI serves `frontend-react/dist` in production through the image's
+`FRONTEND_DIR`. The default source-only local entry point can still serve the
+legacy `frontend/` directory. Both frontends use the same API.
+Hash navigation and the unchanged service URLs preserve
+`localStorage.animeCompassSession` on the existing browser origin.
+
+Cloud Build checks the candidate container before pushing it: model readiness,
+React assets, API routing, cursor pagination, exclusions, and legacy API aliases.
+The check container has no network or Gemini credentials. It does not call the
+production service or alter Secret Manager. A failed check stops publication.
+The deploy helper updates the listed environment and secret references without
+replacing the complete existing lists.
+
 | Setting | Value |
 |---|---|
 | Region | `us-central1` |
@@ -20,7 +34,7 @@ LightGBM.
 | Container port | 8080 |
 | Startup probe | `GET /api/ready`, initial delay 2s, timeout 2s, period 2s, failure threshold 60 (122s budget) |
 | Environment | `LLM_PROVIDER=gemini`, `HF_DATASET_REPO=Seiitsu/anime-compass-data` |
-| Secret | `GEMINI_API_KEY` from Secret Manager `gemini-api-key`, pinned version (default `1`; see [Rotating the Gemini key](#rotating-the-gemini-key)) |
+| Secret | `GEMINI_API_KEY` from Secret Manager `gemini-api-key`, pinned version (default `2`, matching the live revision; see [Rotating the Gemini key](#rotating-the-gemini-key)) |
 | Runtime identity | `anime-compass-run@PROJECT.iam.gserviceaccount.com` |
 | Access | public, unauthenticated |
 

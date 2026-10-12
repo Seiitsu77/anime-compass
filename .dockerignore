@@ -7,6 +7,11 @@
 # was 613 MB and matched none of the explicit names, so it would have been
 # copied into the image.
 .env
+.env.*
+secrets.toml
+.claude
+.agents
+.aws
 .venv
 venv
 *venv
@@ -31,10 +36,11 @@ coverage.xml
 tests
 docs
 
-# Offline model experiments never ship. The React source is not built by this
-# image yet; its dependency tree must not be copied in either way.
+# The Node build stage creates the React bundle from locked source dependencies.
+# Never copy local dependencies or an older generated bundle into the image.
 experiments
 frontend-react/node_modules
+frontend-react/dist
 
 # Raw and intermediate datasets. Runtime artifacts are downloaded at startup
 # and verified against data/artifacts.manifest.json, so they must not be baked

@@ -13,7 +13,6 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from app.agents.gemini_provider import GeminiAgentProvider
 from app.agents.orchestrator import AgentOrchestrator
@@ -22,6 +21,7 @@ from app.core.config import PROJECT_ROOT, Settings, get_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.core.startup import ApplicationStartup, PhaseRecorder
+from app.core.static_files import FrontendStaticFiles
 from app.embeddings.index import SemanticEmbeddingIndex
 from app.embeddings.sentence_transformer import SentenceTransformerEmbeddingProvider
 from app.repositories.session_repository import SQLiteSessionRepository
@@ -323,8 +323,8 @@ def create_app(
         )
 
     app.include_router(router)
-    frontend_root = PROJECT_ROOT / "frontend"
-    app.mount("/", StaticFiles(directory=frontend_root, html=True), name="frontend")
+    frontend_root = settings.frontend_dir
+    app.mount("/", FrontendStaticFiles(directory=frontend_root, html=True), name="frontend")
     return app
 
 

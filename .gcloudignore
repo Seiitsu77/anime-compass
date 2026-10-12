@@ -19,7 +19,7 @@
 .gcloudignore
 
 # Version control and CI
-/.git/
+/.git
 /.github/
 
 # Secrets, at any depth. secrets.toml is Streamlit's local secrets file; none
@@ -65,6 +65,10 @@ Thumbs.db
 /docs/
 /experiments/
 /frontend-react/node_modules/
+/frontend-react/dist/
+/frontend-react/.env*
+/.agents/
+/.aws/
 
 # Raw and intermediate data. Serving artifacts come from the Hugging Face
 # Dataset during the build; only their manifest is uploaded.

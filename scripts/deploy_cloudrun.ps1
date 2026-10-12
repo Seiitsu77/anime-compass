@@ -39,7 +39,7 @@ param(
     # and make which key a revision uses depend on when it happened to start.
     # Google recommends pinning a version for secrets used this way.
     [ValidatePattern('^[1-9][0-9]*$')]
-    [string]$GeminiSecretVersion = '1',
+    [string]$GeminiSecretVersion = '2',
 
     [switch]$AllowDirty
 )
@@ -252,8 +252,8 @@ try {
         "--port=$ContainerPort",
         "--concurrency=$Concurrency",
         "--startup-probe=$StartupProbe",
-        "--set-env-vars=LLM_PROVIDER=gemini,HF_DATASET_REPO=$HfDatasetRepo",
-        "--set-secrets=GEMINI_API_KEY=${SecretName}:$GeminiSecretVersion",
+        "--update-env-vars=LLM_PROVIDER=gemini,HF_DATASET_REPO=$HfDatasetRepo",
+        "--update-secrets=GEMINI_API_KEY=${SecretName}:$GeminiSecretVersion",
         '--allow-unauthenticated',
         '--quiet'
     )
