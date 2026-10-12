@@ -6,14 +6,23 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
-from app.api.schemas import RecommendRequest
+from app.api.schemas import RecommendPageRequest, RecommendRequest
 from app.core.errors import AppError
 from app.repositories.session_repository import SQLiteSessionRepository, merge_profiles
+from app.services.recommendation_sequence import (
+    SEQUENCE_VERSION,
+    RankedSequence,
+    SequenceCache,
+    decode_cursor,
+    encode_cursor,
+    sequence_fingerprint,
+)
 from backend.anime_agent.als_serving import ALSCollaborativeIndex
 from backend.anime_agent.fast_path import FastPathConfig, recommend_fast
 from backend.anime_agent.path_policy import RecommendationPath, choose_recommendation_path
@@ -29,6 +38,18 @@ def _title_key(value: Any) -> str:
     return " ".join(str(value).casefold().split())
 
 
+@dataclass(frozen=True)
+class _ProfileInputs:
+    """What one request tells the fast path about a user."""
+
+    positives: list[int]
+    # Everything that must never be returned, the positives included.
+    excluded: list[int]
+    excluded_titles: list[str]
+    title_ids: list[int]
+    unresolved_titles: int
+
+
 class RecommendationService:
     def __init__(
         self,
@@ -40,6 +61,10 @@ class RecommendationService:
         tail_index: Any | None = None,
         fast_path_config: FastPathConfig | None = None,
         debug_diagnostics: bool = False,
+        sequence_windows: int = 4,
+        starter_depth: int = 54,
+        sequence_cache_size: int = 256,
+        sequence_ttl_seconds: float = 1800.0,
     ):
         self.recommender = recommender
         self.sessions = sessions
@@ -53,6 +78,10 @@ class RecommendationService:
         # Developer-only: see Settings.recommendation_debug_diagnostics.
         self.debug_diagnostics = debug_diagnostics
         self._title_ids: dict[str, tuple[int, ...]] | None = None
+        # Paged sequences: see app/services/recommendation_sequence.py.
+        self.sequence_windows = max(1, int(sequence_windows))
+        self.starter_depth = max(1, int(starter_depth))
+        self._sequences = SequenceCache(sequence_cache_size, sequence_ttl_seconds)
         self._cache: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
         self._cache_ttl_seconds = 45.0
         self._cache_size = 128
@@ -205,32 +234,13 @@ class RecommendationService:
         through to the hybrid rather than returning an empty list.
         """
         assert self.als_index is not None
-        positives = [int(value) for value in request.liked_ids]
-        positives.extend(int(value) for value in session_profile.get("liked_ids", []) or [])
-        positives = list(dict.fromkeys(positives))
-        excluded = [int(value) for value in request.excluded_ids]
-        excluded.extend(int(value) for value in session_profile.get("disliked_ids", []) or [])
-        excluded.extend(int(value) for value in session_profile.get("watched_ids", []) or [])
-
-        # Negative feedback is stored by title: the browser's legacy session
-        # schema and the agent both record disliked, hidden, and seen titles as
-        # strings. The fast path used to read IDs only, so on the default
-        # personalized route a "not interested" title was dropped by the
-        # constraint-rich Hybrid and by the browser, but not here.
-        excluded_titles = [
-            *request.excluded_titles,
-            *request.seen_titles,
-            *(session_profile.get("excluded_titles", []) or []),
-            *(session_profile.get("seen_titles", []) or []),
-            *(session_profile.get("disliked_titles", []) or []),
-        ]
-        title_ids, unresolved_titles = self._exact_title_ids(excluded_titles)
-        excluded.extend(title_ids)
-        # A liked title is a profile input and never a recommendation. ALS masks
-        # its own positives, but that is one source's behaviour; stating it here
-        # makes the guarantee hold for the fallback and tail sources too.
-        excluded.extend(positives)
-        excluded = list(dict.fromkeys(excluded))
+        inputs = self._profile_inputs(
+            request.liked_ids,
+            request.excluded_ids,
+            [*request.excluded_titles, *request.seen_titles],
+            session_profile,
+        )
+        positives, excluded = inputs.positives, inputs.excluded
 
         # `one_per_series` is part of the request contract, and the fast path was
         # silently ignoring it: liking Steins;Gate returned three Steins;Gate
@@ -269,19 +279,9 @@ class RecommendationService:
 
         diagnostics = {**result.diagnostics, **path_decision.as_dict()}
         diagnostics["artifact_versions"] = self._artifact_versions()
-        # Counts only, so they are safe in any environment. They answer "did my
-        # feedback reach the ranker?" without revealing what the feedback was.
-        known_to_model = self.als_index.index_by_id
-        diagnostics["profile"] = {
-            "liked_ids_received": len(request.liked_ids),
-            "positives_used": len(positives),
-            "positives_known_to_model": sum(1 for value in positives if value in known_to_model),
-            "excluded_ids_received": len(request.excluded_ids),
-            "excluded_titles_received": len({_title_key(value) for value in excluded_titles if str(value).strip()}),
-            "excluded_titles_resolved": len(title_ids),
-            "excluded_titles_unresolved": unresolved_titles,
-            "series_collapsed": bool(request.one_per_series),
-        }
+        diagnostics["profile"] = self._profile_counts(
+            inputs, len(request.liked_ids), len(request.excluded_ids), request.one_per_series
+        )
         if self.debug_diagnostics:
             diagnostics["debug"] = self._debug_block(positives, excluded, result, ranked_ids)
         return {
@@ -293,6 +293,313 @@ class RecommendationService:
             "diagnostics": diagnostics,
             "cache_hit": False,
         }
+
+    def _profile_inputs(
+        self,
+        liked_ids: Sequence[int],
+        excluded_ids: Sequence[int],
+        titles: Sequence[str],
+        session_profile: dict[str, Any],
+    ) -> _ProfileInputs:
+        """Positives and exclusions for one request, resolved once."""
+        positives = [int(value) for value in liked_ids]
+        positives.extend(int(value) for value in session_profile.get("liked_ids", []) or [])
+        positives = list(dict.fromkeys(positives))
+        excluded = [int(value) for value in excluded_ids]
+        excluded.extend(int(value) for value in session_profile.get("disliked_ids", []) or [])
+        excluded.extend(int(value) for value in session_profile.get("watched_ids", []) or [])
+
+        # Negative feedback is stored by title: the browser's legacy session
+        # schema and the agent both record disliked, hidden, and seen titles as
+        # strings. The fast path used to read IDs only, so on the default
+        # personalized route a "not interested" title was dropped by the
+        # constraint-rich Hybrid and by the browser, but not here.
+        excluded_titles = [
+            *titles,
+            *(session_profile.get("excluded_titles", []) or []),
+            *(session_profile.get("seen_titles", []) or []),
+            *(session_profile.get("disliked_titles", []) or []),
+        ]
+        title_ids, unresolved_titles = self._exact_title_ids(excluded_titles)
+        excluded.extend(title_ids)
+        # A liked title is a profile input and never a recommendation. ALS masks
+        # its own positives, but that is one source's behaviour; stating it here
+        # makes the guarantee hold for the fallback and tail sources too.
+        excluded.extend(positives)
+        excluded = list(dict.fromkeys(excluded))
+        return _ProfileInputs(positives, excluded, excluded_titles, title_ids, unresolved_titles)
+
+    def _profile_counts(
+        self,
+        inputs: _ProfileInputs,
+        liked_received: int,
+        excluded_received: int,
+        one_per_series: bool,
+    ) -> dict[str, Any]:
+        """Counts only, so they are safe to return in any environment.
+
+        They answer "did my feedback reach the ranker?" without revealing what
+        the feedback was.
+        """
+        known_to_model = self.als_index.index_by_id if self.als_index is not None else {}
+        return {
+            "liked_ids_received": liked_received,
+            "positives_used": len(inputs.positives),
+            "positives_known_to_model": sum(1 for value in inputs.positives if value in known_to_model),
+            "excluded_ids_received": excluded_received,
+            "excluded_titles_received": len(
+                {_title_key(value) for value in inputs.excluded_titles if str(value).strip()}
+            ),
+            "excluded_titles_resolved": len(inputs.title_ids),
+            "excluded_titles_unresolved": inputs.unresolved_titles,
+            "series_collapsed": bool(one_per_series),
+        }
+
+    # ------------------------------------------------------------ paging
+
+    def sequence_limits(self) -> dict[str, int]:
+        """How deep a sequence can go, for /api/health and the client."""
+        return {
+            "window_size": int(self.fast_path_config.retrieval.als_top_n),
+            "max_windows": self.sequence_windows,
+            "starter_depth": self.starter_depth,
+        }
+
+    async def page(self, request: RecommendPageRequest) -> dict[str, Any]:
+        """One page of the personalized sequence the request describes."""
+        started = time.perf_counter()
+        response = await asyncio.to_thread(self._page, request)
+        response["timing_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        sequence = response["sequence"]
+        logger.info(
+            "recommendation_page_completed",
+            extra={
+                "context": {
+                    "source": sequence["source"],
+                    "offset": sequence["offset"],
+                    "returned": sequence["returned"],
+                    "windows_computed": sequence["windows_computed"],
+                    "cache": sequence["cache"],
+                    "has_more": sequence["has_more"],
+                    "duration_ms": response["timing_ms"],
+                }
+            },
+        )
+        return response
+
+    def _page(self, request: RecommendPageRequest) -> dict[str, Any]:
+        # The request alone defines the sequence. The stored session profile is
+        # deliberately not merged in: it can change between two pages, and it
+        # does not survive an instance restart, so a sequence that depended on
+        # it could not be rebuilt identically.
+        inputs = self._profile_inputs(
+            request.liked_ids,
+            request.excluded_ids,
+            [*request.excluded_titles, *request.seen_titles],
+            request.session_profile,
+        )
+        fingerprint = sequence_fingerprint(
+            {
+                "request": request.model_dump(exclude={"cursor", "limit", "session_id"}),
+                "versions": self._sequence_versions(),
+            }
+        )
+        offset = 0
+        if request.cursor:
+            cursor_fingerprint, offset = decode_cursor(request.cursor)
+            if cursor_fingerprint != fingerprint:
+                # A different profile, or a deployment that changed what ranks
+                # it. Either way the old position means nothing here, and
+                # serving from it could repeat or skip titles.
+                raise AppError(
+                    "This recommendation sequence has changed; start a new one",
+                    code="sequence_expired",
+                    status_code=409,
+                )
+
+        sequence, cached = self._sequences.get_or_create(fingerprint)
+        with sequence.lock:
+            was_ranked = len(sequence.items)
+            self._rank_until(sequence, inputs, request, offset + request.limit)
+            ids = sequence.items[offset : offset + request.limit]
+            ranked = len(sequence.items)
+            exhausted = sequence.exhausted
+            source = sequence.source or "fast"
+            windows = sequence.windows
+            window_sizes = list(sequence.window_sizes)
+            diagnostics = dict(sequence.diagnostics)
+            payloads = {anime_id: sequence.payloads[anime_id] for anime_id in ids if anime_id in sequence.payloads}
+
+        items = [
+            payloads[anime_id]
+            if anime_id in payloads
+            else self.recommender.public_item(self.recommender.by_id[anime_id])
+            for anime_id in ids
+            if anime_id in payloads or anime_id in self.recommender.by_id
+        ]
+        end = offset + len(ids)
+        has_more = end < ranked or not exhausted
+        diagnostics["profile"] = self._profile_counts(
+            inputs, len(request.liked_ids), len(request.excluded_ids), request.one_per_series
+        )
+        return {
+            "results": items,
+            "sequence": {
+                "id": fingerprint[:16],
+                "offset": offset,
+                "returned": len(items),
+                "next_cursor": encode_cursor(fingerprint, end) if has_more else None,
+                "has_more": has_more,
+                "exhausted": not has_more,
+                "source": source,
+                "ranked_so_far": ranked,
+                "windows_computed": windows,
+                "window_sizes": window_sizes,
+                # "hit" means no ranking ran for this page.
+                "cache": "hit" if cached and ranked == was_ranked else "miss",
+                **self.sequence_limits(),
+            },
+            "diagnostics": diagnostics,
+        }
+
+    def _sequence_versions(self) -> dict[str, Any]:
+        """Everything outside the request that decides the order of a sequence."""
+        reranker = self.fast_path_config.reranker
+        reranker_info = reranker.model_info() if reranker is not None else {}
+        return {
+            "sequence": SEQUENCE_VERSION,
+            **self._artifact_versions(),
+            "reranker_model_sha256": reranker_info.get("model_sha256"),
+            "reranker_artifact_sha256": reranker_info.get("artifact_sha256"),
+            "catalog_items": len(self.recommender.catalog),
+            "als_available": self.als_index is not None,
+            **self.sequence_limits(),
+        }
+
+    def _rank_until(
+        self,
+        sequence: RankedSequence,
+        inputs: _ProfileInputs,
+        request: RecommendPageRequest,
+        needed: int,
+    ) -> None:
+        """Rank more of `sequence` until it holds `needed` titles or runs out."""
+        while len(sequence.items) < needed and not sequence.exhausted:
+            if sequence.source != "hybrid" and self.als_index is not None and inputs.positives:
+                self._rank_next_window(sequence, inputs, request.one_per_series)
+                if sequence.source == "fast":
+                    continue
+            # No Likes the collaborative model knows: one starter list.
+            self._rank_starter(sequence, inputs, request)
+
+    def _rank_next_window(self, sequence: RankedSequence, inputs: _ProfileInputs, one_per_series: bool) -> None:
+        """Append the next ALS window, ordered exactly as production orders one.
+
+        Candidates of earlier windows are excluded at retrieval, so ALS returns
+        the next `window_size` titles by its own score. They then go through the
+        unchanged fast path -- filters, quality blend, LambdaMART -- with a limit
+        equal to the window, so the whole window comes back in learned order.
+        """
+        assert self.als_index is not None
+        window_size = int(self.fast_path_config.retrieval.als_top_n)
+        excluded = [*inputs.excluded, *sorted(sequence.consumed)]
+        result = recommend_fast(
+            inputs.positives,
+            catalog_by_id=self.recommender.by_id,
+            als_source=self.als_index,
+            fallback_source=self.fallback_index,
+            tail_source=self.tail_index,
+            quality_lookup=self.als_index,
+            profile_rows=inputs.positives,
+            excluded_ids=excluded,
+            limit=window_size,
+            config=self.fast_path_config,
+        )
+        window = list(result.anime_ids)
+        retrieved = set(window)
+        if result.diagnostics.get("candidate_pool_size", 0) > len(window):
+            # Some retrieved titles are not in the served catalog. They must
+            # still count as consumed, or every later window would retrieve them
+            # again and shrink.
+            retrieved.update(self.als_index.top_candidates(inputs.positives, window_size, excluded_ids=excluded))
+        if not retrieved:
+            if sequence.source is None:
+                return  # nothing the model can rank: the caller falls back to a starter list
+            sequence.exhausted = True
+            return
+
+        if sequence.source is None:
+            sequence.source = "fast"
+            sequence.diagnostics = {**result.diagnostics, "recommendation_path": "fast"}
+            sequence.diagnostics["artifact_versions"] = self._artifact_versions()
+            if self.debug_diagnostics:
+                sequence.diagnostics["debug"] = self._debug_block(inputs.positives, excluded, result, window[:50])
+            if one_per_series:
+                sequence.seen_series = self._series_of(inputs.positives)
+        sequence.consumed.update(retrieved)
+        accepted = self._accept(window, sequence.seen_series)
+        sequence.items.extend(accepted)
+        sequence.window_sizes.append(len(accepted))
+        sequence.windows += 1
+        if sequence.windows >= self.sequence_windows:
+            sequence.exhausted = True
+
+    def _rank_starter(self, sequence: RankedSequence, inputs: _ProfileInputs, request: RecommendPageRequest) -> None:
+        """A fixed-length starter list from the hybrid, ranked once."""
+        diagnostics: dict[str, Any] = {}
+        results = self.recommender.recommend(
+            liked_ids=list(inputs.positives),
+            excluded_ids=list(inputs.excluded),
+            excluded_titles=list(request.excluded_titles),
+            seen_titles=list(request.seen_titles),
+            session_profile=dict(request.session_profile),
+            one_per_series=request.one_per_series,
+            limit=self.starter_depth,
+            diagnostics=diagnostics,
+        )
+        blocked = set(inputs.excluded)
+        for item in results:
+            anime_id = int(item["id"])
+            if anime_id in blocked or anime_id in sequence.payloads:
+                continue
+            sequence.items.append(anime_id)
+            sequence.payloads[anime_id] = item
+        sequence.source = "hybrid"
+        sequence.diagnostics = {
+            **diagnostics,
+            "recommendation_path": "constraint_rich",
+            "path_reason": "no_positives_known_to_the_collaborative_model",
+        }
+        sequence.window_sizes.append(len(sequence.items))
+        sequence.windows = 1
+        sequence.exhausted = True
+
+    def _series_of(self, anime_ids: Iterable[int]) -> set[str]:
+        keys: set[str] = set()
+        for anime_id in anime_ids:
+            item = self.recommender.by_id.get(int(anime_id))
+            if item is not None:
+                keys.add(series_key(str(item.get("title") or "")))
+        return keys
+
+    def _accept(self, ranked: Sequence[int], seen_series: set[str] | None) -> list[int]:
+        """Keep the first entry of each franchise not seen earlier in the sequence.
+
+        The same rule as `_collapse_series`, with the seen set carried across
+        windows so a franchise shown on page 2 does not return on page 14.
+        """
+        kept: list[int] = []
+        for anime_id in ranked:
+            item = self.recommender.by_id.get(int(anime_id))
+            if item is None:
+                continue
+            if seen_series is not None:
+                key = series_key(str(item.get("title") or ""))
+                if key in seen_series:
+                    continue
+                seen_series.add(key)
+            kept.append(int(anime_id))
+        return kept
 
     def _exact_title_ids(self, titles: Iterable[Any]) -> tuple[list[int], int]:
         """Catalog IDs whose title equals a requested title, and the miss count.

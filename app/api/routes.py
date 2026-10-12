@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from app.api.dependencies import container, startup
 from app.api.schemas import (
     RECOMMEND_REQUEST_LIMITS,
+    RECOMMENDATION_BATCH_SIZE,
     ChatRequest,
     ChatResponse,
     EntitySearchRequest,
@@ -15,6 +16,8 @@ from app.api.schemas import (
     HealthResponse,
     LegacySessionPreferenceUpdate,
     RankRequest,
+    RecommendPageRequest,
+    RecommendPageResponse,
     RecommendRequest,
     RecommendResponse,
     SearchRequest,
@@ -46,6 +49,11 @@ async def chat(request: ChatRequest, state: Container) -> dict[str, Any]:
 @router.post("/recommend", response_model=RecommendResponse)
 async def recommend(request: RecommendRequest, state: Container) -> dict[str, Any]:
     return await state.recommendations.recommend(request)
+
+
+@router.post("/recommend/page", response_model=RecommendPageResponse)
+async def recommend_page(request: RecommendPageRequest, state: Container) -> dict[str, Any]:
+    return await state.recommendations.page(request)
 
 
 @router.post("/search")
@@ -279,6 +287,12 @@ async def health(init: Startup) -> dict[str, Any]:
             # Advertised so a client can truncate an oversized profile visibly
             # instead of having the request rejected or a preference dropped.
             "request_limits": dict(RECOMMEND_REQUEST_LIMITS),
+            # Presence of this block is how a client knows cursor paging exists.
+            "pagination": {
+                "endpoint": "/api/recommend/page",
+                "batch_size": RECOMMENDATION_BATCH_SIZE,
+                **state.recommendations.sequence_limits(),
+            },
         },
         "agent": {
             "provider": selected["provider"] if selected else "deterministic",

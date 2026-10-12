@@ -4,10 +4,10 @@ import { Navbar } from './components/Navbar.jsx';
 import { AnimeCard } from './components/AnimeCard.jsx';
 import { AgentPage } from './components/AgentPage.jsx';
 import { EMPTY_FILTERS, FilterBar } from './components/FilterBar.jsx';
-import { api, createPreferenceSync, recommend, resolveLimits, searchCatalog } from './lib/api.js';
+import { api, buildSequenceRequest, createPreferenceSync, recommend, recommendPage, resolveLimits, resolvePagination, searchCatalog } from './lib/api.js';
 import { clearHiddenTitle, clearNotInterested, legacyHiddenTitles, loadSession, markNotInterested, normalizeSession, persistSession, toggleLiked, toggleWatchlist } from './lib/session.js';
 import { BATCH_SIZE } from './lib/recommendationPool.js';
-import { createRecommendationFeed } from './lib/recommendationFeed.js';
+import { createAutoSource, createCursorSource, createExclusionSource, createRecommendationFeed } from './lib/recommendationFeed.js';
 import { createDiagnosticsLog } from './lib/diagnostics.js';
 import { S } from './lib/strings.js';
 import { BlurText } from './components/animations/BlurText.jsx';
@@ -62,10 +62,21 @@ export function App() {
   const limits=useMemo(()=>resolveLimits(health),[health]);
   const limitsRef=useRef(limits);
   limitsRef.current=limits;
+  const pagination=useMemo(()=>resolvePagination(health),[health]);
+  const paginationRef=useRef(pagination);
+  paginationRef.current=pagination;
   const feedRef=useRef(null);
-  if(!feedRef.current)feedRef.current=createRecommendationFeed({
-    fetchPage:(current,{shownIds,skippedIds,limit,signal})=>recommend(current,signal,{shownIds,skippedIds,limit,limits:limitsRef.current}),
-  });
+  // Cursor paging when the backend advertises it; otherwise page by exclusion.
+  if(!feedRef.current)feedRef.current=createRecommendationFeed({source:createAutoSource({
+    available:()=>Boolean(paginationRef.current),
+    cursor:createCursorSource({
+      buildRequest:(current,{skippedIds})=>buildSequenceRequest(current,{skippedIds,limits:limitsRef.current}),
+      requestPage:(body,options)=>recommendPage(body,{...options,endpoint:paginationRef.current?.endpoint}),
+    }),
+    exclusion:createExclusionSource({
+      fetchPage:(current,{shownIds,skippedIds,limit,signal})=>recommend(current,signal,{shownIds,skippedIds,limit,limits:limitsRef.current}),
+    }),
+  })});
   const feed=feedRef.current;
   const syncRef=useRef(null);
   if(!syncRef.current)syncRef.current=createPreferenceSync();

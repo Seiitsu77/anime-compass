@@ -14,23 +14,106 @@
  *                     only. It is sent as an exclusion and never written to the
  *                     profile.
  *
- * This is the single seam for the paginated recommendation API. Paging is
- * expressed today as "exclude what was shown"; `fetchPage` receives the shown
- * and skipped IDs and can translate them to a cursor or offset without any
- * change to the callers.
+ * Where the titles come from is a *source*. Next Batch and Replace both read
+ * the same source, in order, so they cannot disagree about what comes next.
+ *
+ *   Cursor source     The server ranks one sequence for a frozen profile
+ *                     snapshot and the client holds a cursor into it. Requests
+ *                     carry the snapshot and the cursor, never the titles
+ *                     already shown, so they do not grow with paging.
+ *   Exclusion source  For a backend that does not offer cursor paging: every
+ *                     request excludes everything already shown.
  */
 import { blockedIds, blockedTitleKeys, titleKey } from './session.js';
-import { BATCH_SIZE, POOL_SIZE, uniqueEligible } from './recommendationPool.js';
+import { BATCH_SIZE, POOL_SIZE, SEQUENCE_PAGE_SIZE, uniqueEligible } from './recommendationPool.js';
 
 const idOf = (item) => Number(item?.id);
 const isAbort = (error) => error?.name === 'AbortError';
+const isExpired = (error) => error?.code === 'sequence_expired' || error?.status === 409;
+// One click may need several pages when the client filter removes most of one
+// (after a sequence restart, for example). Bounded so a click always returns.
+const MAX_REQUESTS_PER_ACTION = 8;
 
-export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, poolSize = POOL_SIZE } = {}) {
+/**
+ * Cursor paging against `/api/recommend/page`.
+ *
+ * `buildRequest(session, {skippedIds})` returns `{body, accounting}`; the body is
+ * frozen for the life of the sequence. `requestPage(body, {cursor, limit,
+ * signal})` returns the API payload.
+ */
+export function createCursorSource({ buildRequest, requestPage, pageSize = SEQUENCE_PAGE_SIZE }) {
+  const read = (payload, state) => {
+    const sequence = payload?.sequence || {};
+    return {
+      results: payload?.results || [],
+      hasMore: Boolean(sequence.has_more && sequence.next_cursor),
+      accounting: state.accounting,
+      payload,
+      state: { ...state, cursor: sequence.next_cursor || null },
+    };
+  };
+  return {
+    kind: 'cursor',
+    async open(session, { skippedIds = [], signal } = {}) {
+      const { body, accounting } = buildRequest(session, { skippedIds });
+      const state = { kind: 'cursor', body, accounting, cursor: null };
+      return read(await requestPage(body, { cursor: null, limit: pageSize, signal }), state);
+    },
+    async more(state, { signal } = {}) {
+      if (!state.cursor) return { results: [], hasMore: false, accounting: state.accounting, state };
+      return read(await requestPage(state.body, { cursor: state.cursor, limit: pageSize, signal }), state);
+    },
+  };
+}
+
+/**
+ * Paging by exclusion. `fetchPage(session, {shownIds, skippedIds, limit,
+ * signal})` returns `{results, accounting}`. The server gives no "has more"
+ * signal here, so the feed treats a page with nothing new as the end.
+ */
+export function createExclusionSource({ fetchPage, poolSize = POOL_SIZE }) {
+  const read = (payload) => ({
+    results: payload?.results || [],
+    hasMore: true,
+    accounting: payload?.accounting || null,
+    payload: payload || {},
+    state: { kind: 'exclusion' },
+  });
+  return {
+    kind: 'exclusion',
+    async open(session, { skippedIds = [], signal } = {}) {
+      return read(await fetchPage(session, { shownIds: [], skippedIds, limit: poolSize, signal }));
+    },
+    async more(_state, { session, shownIds = [], skippedIds = [], signal } = {}) {
+      return read(await fetchPage(session, { shownIds, skippedIds, limit: poolSize, signal }));
+    },
+  };
+}
+
+/** Use `cursor` when `available()` says the backend supports it, else `exclusion`. */
+export function createAutoSource({ cursor, exclusion, available }) {
+  const byKind = { cursor, exclusion };
+  return {
+    kind: 'auto',
+    open(session, options) {
+      return (available() ? cursor : exclusion).open(session, options);
+    },
+    more(state, options) {
+      return byKind[state?.kind || 'exclusion'].more(state, options);
+    },
+  };
+}
+
+export function createRecommendationFeed({ source, fetchPage, batchSize = BATCH_SIZE, poolSize = POOL_SIZE } = {}) {
+  const pages = source || createExclusionSource({ fetchPage, poolSize });
   let epoch = 0;
   let resetting = false;
   let visible = [];
   let pool = [];
+  let state = null;
+  let hasMore = false;
   let exhausted = false;
+  let restarts = 0;
   let accounting = null;
   let queue = Promise.resolve();
   const shown = new Set();
@@ -48,20 +131,37 @@ export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, po
   });
   const stale = () => ({ applied: false, epoch });
 
-  async function request(session, signal) {
-    const payload = await fetchPage(session, {
-      shownIds: [...shown], skippedIds: [...skipped], limit: poolSize, signal,
-    });
-    return payload || {};
-  }
-  /** Ask for more candidates, keeping whatever is left of the current pool. */
-  async function refill(session, mine) {
-    const payload = await request(session);
-    if (mine !== epoch) return null;
-    accounting = payload.accounting || accounting;
-    const fresh = eligible(payload.results, session, shown);
-    if (!fresh.length) exhausted = true;
-    return { payload, available: uniqueEligible([...fresh, ...eligible(pool, session, shown)]) };
+  /**
+   * Read the source until `need` unseen titles are in hand or it runs out.
+   * What is left of the reserve comes first: it is earlier in the sequence.
+   * Returns null when the profile changed while a request was in flight.
+   */
+  async function gather(session, mine, need) {
+    let available = eligible(pool, session, shown);
+    let payload = null;
+    for (let request = 0; request < MAX_REQUESTS_PER_ACTION && available.length < need && hasMore; request++) {
+      let page;
+      try {
+        page = await pages.more(state, { session, shownIds: [...shown], skippedIds: [...skipped] });
+      } catch (error) {
+        if (!isExpired(error)) throw error;
+        // The server can no longer continue this sequence: a deployment changed
+        // what ranks it. Start a new one. `shown` still prevents any repeat.
+        page = await pages.open(session, { skippedIds: [...skipped] });
+        restarts += 1;
+      }
+      if (mine !== epoch) return null;
+      state = page.state;
+      hasMore = page.hasMore;
+      accounting = page.accounting || accounting;
+      payload = page.payload || payload;
+      const fresh = eligible(page.results, session, shown);
+      // An exclusion source has no end marker; a page with nothing new is one.
+      if (!fresh.length && page.state?.kind !== 'cursor') hasMore = false;
+      available = uniqueEligible([...available, ...fresh]);
+    }
+    if (!hasMore && available.length < need) exhausted = true;
+    return { payload, available };
   }
   /** Run one operation at a time, in click order, and never across a reset. */
   function enqueue(operation) {
@@ -76,9 +176,9 @@ export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, po
     let available = eligible(pool, session, shown);
     let error = null;
     let payload = null;
-    if (!available.length && !exhausted) {
+    if (!available.length && hasMore) {
       try {
-        const more = await refill(session, mine);
+        const more = await gather(session, mine, 1);
         if (!more) return stale();
         ({ available, payload } = more);
       } catch (failure) { error = failure; }
@@ -90,6 +190,7 @@ export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, po
       shown.add(idOf(replacement));
       visible = visible.map(entry => (idOf(entry) === id ? replacement : entry));
     } else {
+      if (!hasMore) exhausted = true;
       visible = visible.filter(entry => idOf(entry) !== id);
     }
     return snapshot({ changed: true, replacement, error, payload });
@@ -101,18 +202,28 @@ export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, po
       const mine = ++epoch;
       resetting = true;
       try {
-        // `shown` is deliberately not sent: a new profile ranks from the top.
-        const payload = await fetchPage(session, {
-          shownIds: [], skippedIds: [...skipped], limit: poolSize, signal,
-        }) || {};
+        // Nothing already shown is sent: a new profile ranks from the top.
+        const page = await pages.open(session, { skippedIds: [...skipped], signal });
         if (mine !== epoch || signal?.aborted) return stale();
-        const list = eligible(payload.results, session);
         shown.clear();
-        visible = list.slice(0, batchSize);
-        pool = list.slice(batchSize);
+        state = page.state;
+        hasMore = page.hasMore;
         exhausted = false;
-        accounting = payload.accounting || null;
+        accounting = page.accounting || null;
+        pool = eligible(page.results, session);
+        let payload = page.payload;
+        if (pool.length < batchSize && hasMore && page.state?.kind === 'cursor') {
+          // The client filter thinned the first page; read on to fill the batch.
+          const more = await gather(session, mine, batchSize);
+          if (!more) return stale();
+          pool = more.available;
+          payload = payload || more.payload;
+        }
+        if (page.state?.kind !== 'cursor' && !pool.length) hasMore = false;
+        visible = pool.slice(0, batchSize);
+        pool = pool.slice(batchSize);
         for (const item of visible) shown.add(idOf(item));
+        if (!hasMore && !pool.length) exhausted = true;
         return snapshot({ payload, partial: visible.length < batchSize });
       } catch (error) {
         if (mine !== epoch || isAbort(error)) return stale();
@@ -128,9 +239,9 @@ export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, po
       return enqueue(async (mine) => {
         let available = eligible(pool, session, shown);
         let payload = null;
-        if (available.length < batchSize && !exhausted) {
+        if (available.length < batchSize && hasMore) {
           try {
-            const more = await refill(session, mine);
+            const more = await gather(session, mine, batchSize);
             if (!more) return stale();
             ({ available, payload } = more);
           } catch (error) {
@@ -146,6 +257,7 @@ export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, po
         pool = available.slice(next.length);
         visible = next;
         for (const item of next) shown.add(idOf(item));
+        if (!hasMore && !pool.length) exhausted = true;
         return snapshot({ changed: true, partial: next.length < batchSize, payload });
       });
     },
@@ -171,7 +283,8 @@ export function createRecommendationFeed({ fetchPage, batchSize = BATCH_SIZE, po
     forgetSkips() { skipped.clear(); },
     state() {
       return {
-        epoch, resetting, exhausted,
+        epoch, resetting, exhausted, hasMore, restarts,
+        source: state?.kind || null, cursor: state?.cursor || null,
         visibleIds: visible.map(idOf), poolIds: pool.map(idOf),
         shownIds: [...shown], skippedIds: [...skipped],
       };

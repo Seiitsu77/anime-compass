@@ -108,6 +108,17 @@ class Settings(BaseSettings):
     # Diversity is off by default: ALS costs 2.97% ILD for a 73% relevance gain.
     fast_path_diversity_strength: float = 0.0
     fast_path_diversity_window: int = 30
+    # Paged recommendations. A sequence is ranked one window at a time: each
+    # window is `retrieval_als_top_n` titles by ALS score, ordered by the
+    # reranker. Depth is this many windows, not a larger response limit.
+    recommendation_sequence_windows: int = Field(default=4, ge=1, le=12)
+    # Titles in a starter sequence, for a profile the collaborative model
+    # cannot serve (no Likes yet). Three pages of 18.
+    recommendation_starter_depth: int = Field(default=54, ge=18, le=200)
+    # Partially ranked sequences kept in memory. Purely an optimisation: an
+    # evicted or lost entry is rebuilt identically from the request.
+    recommendation_sequence_cache_size: int = Field(default=256, ge=1, le=10_000)
+    recommendation_sequence_ttl_seconds: int = Field(default=1800, ge=1, le=86_400)
     # Developer-only. Adds a `debug` block to fast-path diagnostics: a digest and
     # norm of the folded-in ALS user vector plus the leading candidate IDs before
     # and after reranking, which is enough to confirm that a Like moved the

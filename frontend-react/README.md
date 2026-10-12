@@ -101,10 +101,11 @@ metadata are shown exactly as the catalog provides them.
 
 - **A Liked title is never recommended.** Enforced by the API (profile titles
   are excluded on every path) and again by the eligibility filter in the client.
-- **Next Batch never repeats.** Every title shown in a sequence is sent as an
-  exclusion and filtered again on the client, so a server that ignored the
-  exclusions still could not cause a repeat. When the pool is exhausted the
-  page says so.
+- **Next Batch never repeats.** The server ranks one sequence per profile
+  snapshot and the client holds a cursor into it (see
+  [Pagination](#pagination)). Titles are also filtered again on the client, so
+  even a misbehaving server could not cause a repeat. When the sequence ends
+  the page says so.
 - **A stale response cannot overwrite a newer one.** Each profile change starts
   a new epoch in `recommendationFeed.js`; any response that returns in a later
   epoch than it started is dropped. A burst of Likes is debounced into one
@@ -119,6 +120,31 @@ metadata are shown exactly as the catalog provides them.
   in flight and the newest profile always wins. Only fields the API accepts are
   sent, so a restored backup with an unknown key no longer makes every sync
   fail.
+
+### Pagination
+
+`POST /api/recommend/page` serves the For You feed 18 titles at a time.
+
+- **One sequence, read in order.** The request carries the profile snapshot
+  (Likes and what the user excluded) and a cursor. It never carries the titles
+  already shown, so it does not grow with paging. Next Batch and Replace both
+  read the next titles of the same sequence, so they cannot disagree.
+- **Ranking is unchanged.** The first window is the production computation: ALS
+  top 300, ordered by LambdaMART, one entry per franchise. Deeper results are
+  the next 300 titles by ALS score, ordered the same way, and so on for four
+  windows. Nothing is shuffled, and a later window never outranks an earlier
+  one.
+- **Stateless.** The cursor holds a fingerprint of the snapshot and an offset.
+  Any instance can rebuild the sequence from the request, so paging continues
+  across a Cloud Run restart or scale-out. A server-side cache only saves the
+  re-ranking.
+- **Refused, not guessed.** A cursor from a different profile or a different
+  deployment gets `409 sequence_expired`; the client starts a new sequence and
+  still shows nothing twice.
+- **Bounded.** A sequence ends after four windows (`RECOMMENDATION_SEQUENCE_WINDOWS`).
+  A profile with no Likes gets a 54-title starter sequence.
+- A backend that does not advertise `ranking.pagination` in `/api/health` is
+  paged the old way, by excluding everything shown.
 
 ### API changes that came with it
 

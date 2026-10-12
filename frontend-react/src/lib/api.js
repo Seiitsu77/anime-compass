@@ -24,7 +24,9 @@ export async function api(path, { signal, ...options } = {}) {
   try {
     payload = await response.json();
   } catch {
-    throw new ApiError(S.errors.unreadableResponse(response.status), response.status);
+    // A proxy or platform error page, not an API response: the service is down or restarting.
+    const describe = response.status >= 500 ? S.errors.serviceUnavailable : S.errors.unreadableResponse;
+    throw new ApiError(describe(response.status), response.status);
   }
   if (!response.ok) {
     const error = payload.error;
@@ -85,6 +87,23 @@ export function resolveLimits(health) {
   return limits;
 }
 
+/**
+ * Cursor paging, if the backend offers it. `/api/health` advertises
+ * `ranking.pagination`; a backend without that block is paged the old way, by
+ * excluding everything already shown.
+ */
+export function resolvePagination(health) {
+  const advertised = health?.ranking?.pagination;
+  const batchSize = Number(advertised?.batch_size);
+  if (!advertised || typeof advertised.endpoint !== 'string' || !Number.isInteger(batchSize) || batchSize <= 0) return null;
+  return {
+    endpoint: advertised.endpoint,
+    batchSize,
+    windowSize: Number(advertised.window_size) || null,
+    maxWindows: Number(advertised.max_windows) || null,
+  };
+}
+
 const positiveIds = (values) => [...new Set((values || []).map(Number).filter(id => Number.isInteger(id) && id > 0))];
 const lastN = (values, count) => (values.length > count ? values.slice(values.length - count) : values);
 
@@ -102,6 +121,21 @@ const lastN = (values, count) => (values.length > count ? values.slice(values.le
  * title.
  */
 export function buildRecommendRequest(session, options = {}) {
+  const limits = options.limits || LEGACY_REQUEST_LIMITS;
+  const { body, accounting } = buildSequenceRequest(session, options);
+  return { body: { ...body, limit: Math.min(options.limit || limits.results, limits.results) }, accounting };
+}
+
+/**
+ * The profile snapshot that defines one recommendation sequence.
+ *
+ * With cursor paging this body is built once, when a sequence starts, and sent
+ * unchanged with every page; the server rebuilds the same ranked list from it.
+ * `shownIds` is therefore only used by the exclusion fallback. Without it the
+ * exclusion list holds what the user chose to exclude and nothing that grows
+ * with paging.
+ */
+export function buildSequenceRequest(session, options = {}) {
   const limits = options.limits || LEGACY_REQUEST_LIMITS;
   const liked = (session.liked || []).filter(item => Number.isInteger(Number(item.id)) && Number(item.id) > 0);
   const likedSent = lastN(liked, limits.liked_ids);
@@ -142,7 +176,6 @@ export function buildRecommendRequest(session, options = {}) {
       previous_reference_titles: preferences.previous_reference_titles || [],
     },
     one_per_series: true,
-    limit: Math.min(options.limit || limits.results, limits.results),
   };
   const accounting = {
     likedTotal: liked.length,
@@ -154,6 +187,11 @@ export function buildRecommendRequest(session, options = {}) {
     titlesDropped: (hiddenTitles.length - excludedTitles.length) + (seen.length - seenTitles.length),
   };
   return { body, accounting };
+}
+
+/** One page of a server-ranked sequence. `body` comes from buildSequenceRequest. */
+export function recommendPage(body, { cursor = null, limit, signal, endpoint = '/api/recommend/page' } = {}) {
+  return api(endpoint, { method: 'POST', signal, body: JSON.stringify({ ...body, cursor, limit }) });
 }
 
 /** Returns the API payload with the request `accounting` attached. */

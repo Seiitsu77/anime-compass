@@ -31,6 +31,14 @@ export function summarizeRecommendation(payload) {
     rerankedTopIds: Array.isArray(debug.reranked_top_ids) ? debug.reranked_top_ids : null,
     resultIds: (Array.isArray(payload?.results) ? payload.results : []).map(item => Number(item.id)),
     accounting: payload?.accounting || null,
+    // Present for cursor pages: where in the server-ranked sequence this page sits.
+    sequence: payload?.sequence
+      ? {
+          offset: payload.sequence.offset, returned: payload.sequence.returned, source: payload.sequence.source,
+          cache: payload.sequence.cache, hasMore: payload.sequence.has_more, rankedSoFar: payload.sequence.ranked_so_far,
+          windowsComputed: payload.sequence.windows_computed,
+        }
+      : null,
     timingMs: payload?.timing_ms ?? null,
   };
 }

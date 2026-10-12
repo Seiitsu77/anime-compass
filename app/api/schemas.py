@@ -17,6 +17,11 @@ MAX_EXCLUDED_IDS = 2000
 MAX_EXCLUDED_TITLES = 500
 MAX_SEEN_TITLES = 500
 
+# One page of the For You feed. A page is a slice of a server-ranked sequence,
+# so this is a page size and not a depth limit.
+RECOMMENDATION_BATCH_SIZE = 18
+MAX_PAGE_SIZE = 50
+
 RECOMMEND_REQUEST_LIMITS: dict[str, int] = {
     "liked_ids": MAX_LIKED_IDS,
     "excluded_ids": MAX_EXCLUDED_IDS,
@@ -193,6 +198,45 @@ class RecommendResponse(ApiModel):
     timing_ms: float
     cache_hit: bool = False
     message: str | None = None
+
+
+class RecommendPageRequest(ApiModel):
+    """One page of a personalized recommendation sequence.
+
+    Everything except `cursor` and `limit` defines the sequence and must be sent
+    unchanged on every page: the server keeps no per-client state, so it rebuilds
+    the same ranked list from these fields and serves the slice the cursor names.
+    Already-shown titles are deliberately not an input; position is the cursor.
+    """
+
+    session_id: str = Field(default="", max_length=128)
+    liked_ids: list[int] = Field(default_factory=list, max_length=MAX_LIKED_IDS)
+    excluded_ids: list[int] = Field(default_factory=list, max_length=MAX_EXCLUDED_IDS)
+    excluded_titles: list[str] = Field(default_factory=list, max_length=MAX_EXCLUDED_TITLES)
+    seen_titles: list[str] = Field(default_factory=list, max_length=MAX_SEEN_TITLES)
+    session_profile: dict[str, Any] = Field(default_factory=dict)
+    one_per_series: bool = True
+    cursor: str | None = Field(default=None, max_length=512)
+    limit: int = Field(default=RECOMMENDATION_BATCH_SIZE, ge=1, le=MAX_PAGE_SIZE)
+
+    @field_validator("excluded_titles", "seen_titles")
+    @classmethod
+    def normalize_titles(cls, values: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = str(value).strip()
+            if text and text.casefold() not in seen:
+                result.append(text)
+                seen.add(text.casefold())
+        return result
+
+
+class RecommendPageResponse(ApiModel):
+    results: list[AnimeRecommendation]
+    sequence: dict[str, Any]
+    diagnostics: dict[str, Any]
+    timing_ms: float
 
 
 class SearchRequest(ApiModel):

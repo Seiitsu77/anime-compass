@@ -180,7 +180,7 @@ export const S = {
     markedNotInterested: (title) => `“${title}” is marked Not Interested and will not be recommended again.`,
     notInterestedRemoved: (title) => `“${title}” is no longer marked Not Interested.`,
     likesTruncated: (sent, total) => `Using your ${sent} most recent Liked titles out of ${total}. The recommendation service accepts at most ${sent} per request.`,
-    exclusionsTruncated: (dropped) => `${dropped} already-shown ${plural(dropped, 'title', 'titles')} could not be sent to the recommendation service, so new batches may be smaller. Nothing is repeated.`,
+    exclusionsTruncated: (dropped) => `${dropped} excluded ${plural(dropped, 'title', 'titles')} did not fit in the request to the recommendation service, so new batches may be smaller. Nothing is repeated.`,
     rateLimited: 'Too many requests in a short time. Please wait a moment and try again.',
   },
 
@@ -232,6 +232,7 @@ export const S = {
 
   errors: {
     unreadableResponse: (status) => `Unable to read the server response (HTTP ${status}).`,
+    serviceUnavailable: (status) => `The recommendation service is not responding right now (HTTP ${status}).`,
     requestFailed: (status) => `Request failed (HTTP ${status}).`,
   },
 };
