@@ -32,6 +32,11 @@ logger = logging.getLogger("anime_compass.recommendation")
 
 # How many leading IDs the developer-only debug block reports per stage.
 DEBUG_TOP_IDS = 20
+# A starter sequence is ranked one batch at a time. The hybrid's diversity pass
+# is quadratic in its limit, so ranking all 54 titles at once kept a new user
+# waiting several seconds for the first screen; one batch is what that screen
+# shows.
+STARTER_CHUNK = 18
 
 
 def _title_key(value: Any) -> str:
@@ -363,6 +368,7 @@ class RecommendationService:
             "window_size": int(self.fast_path_config.retrieval.als_top_n),
             "max_windows": self.sequence_windows,
             "starter_depth": self.starter_depth,
+            "starter_chunk": STARTER_CHUNK,
         }
 
     async def page(self, request: RecommendPageRequest) -> dict[str, Any]:
@@ -420,7 +426,7 @@ class RecommendationService:
         sequence, cached = self._sequences.get_or_create(fingerprint)
         with sequence.lock:
             was_ranked = len(sequence.items)
-            self._rank_until(sequence, inputs, request, offset + request.limit)
+            self._rank_until(sequence, inputs, request, offset, offset + request.limit)
             ids = sequence.items[offset : offset + request.limit]
             ranked = len(sequence.items)
             exhausted = sequence.exhausted
@@ -481,16 +487,27 @@ class RecommendationService:
         sequence: RankedSequence,
         inputs: _ProfileInputs,
         request: RecommendPageRequest,
+        offset: int,
         needed: int,
     ) -> None:
-        """Rank more of `sequence` until it holds `needed` titles or runs out."""
+        """Rank more of `sequence` until it holds `needed` titles or runs out.
+
+        A starter sequence is the exception: once there is something to return
+        at `offset`, at most one further chunk is ranked per request, and the
+        page may come back shorter than asked. The hybrid is slow, and a short
+        first page now is better than a full one seconds later.
+        """
+        starter_chunks = 0
         while len(sequence.items) < needed and not sequence.exhausted:
             if sequence.source != "hybrid" and self.als_index is not None and inputs.positives:
                 self._rank_next_window(sequence, inputs, request.one_per_series)
                 if sequence.source == "fast":
                     continue
-            # No Likes the collaborative model knows: one starter list.
+            # No Likes the collaborative model knows: a starter list instead.
+            if starter_chunks and len(sequence.items) > offset:
+                break
             self._rank_starter(sequence, inputs, request)
+            starter_chunks += 1
 
     def _rank_next_window(self, sequence: RankedSequence, inputs: _ProfileInputs, one_per_series: bool) -> None:
         """Append the next ALS window, ordered exactly as production orders one.
@@ -545,11 +562,17 @@ class RecommendationService:
             sequence.exhausted = True
 
     def _rank_starter(self, sequence: RankedSequence, inputs: _ProfileInputs, request: RecommendPageRequest) -> None:
-        """A fixed-length starter list from the hybrid, ranked once."""
+        """Append the next chunk of the starter list, ranked by the hybrid.
+
+        Each chunk excludes the chunks before it, which is how the hybrid is
+        paged everywhere else. The list stays deterministic, so any instance
+        rebuilds the same chunks from the same request.
+        """
+        remaining = self.starter_depth - len(sequence.items)
         diagnostics: dict[str, Any] = {}
         results = self.recommender.recommend(
             liked_ids=list(inputs.positives),
-            excluded_ids=list(inputs.excluded),
+            excluded_ids=[*inputs.excluded, *sequence.items],
             excluded_titles=list(request.excluded_titles),
             seen_titles=list(request.seen_titles),
             session_profile=dict(request.session_profile),
@@ -559,25 +582,29 @@ class RecommendationService:
             # every excluded title, not only of Liked ones. Whether that is too
             # aggressive is an open policy question (see
             # experiments/v21_quality/SERIES_POLICY.md); it is not changed here.
-            limit=self.starter_depth,
+            limit=min(STARTER_CHUNK, remaining),
             diagnostics=diagnostics,
         )
         blocked = set(inputs.excluded)
+        added = 0
         for item in results:
             anime_id = int(item["id"])
             if anime_id in blocked or anime_id in sequence.payloads:
                 continue
             sequence.items.append(anime_id)
             sequence.payloads[anime_id] = item
-        sequence.source = "hybrid"
-        sequence.diagnostics = {
-            **diagnostics,
-            "recommendation_path": "constraint_rich",
-            "path_reason": "no_positives_known_to_the_collaborative_model",
-        }
-        sequence.window_sizes.append(len(sequence.items))
-        sequence.windows = 1
-        sequence.exhausted = True
+            added += 1
+        if sequence.source is None:
+            sequence.source = "hybrid"
+            sequence.diagnostics = {
+                **diagnostics,
+                "recommendation_path": "constraint_rich",
+                "path_reason": "no_positives_known_to_the_collaborative_model",
+            }
+        sequence.window_sizes.append(added)
+        sequence.windows += 1
+        if added == 0 or len(sequence.items) >= self.starter_depth:
+            sequence.exhausted = True
 
     def _series_of(self, anime_ids: Iterable[int]) -> set[str]:
         keys: set[str] = set()

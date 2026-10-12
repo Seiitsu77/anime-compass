@@ -357,6 +357,35 @@ async def test_a_profile_with_no_likes_gets_a_bounded_starter_sequence(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_the_first_starter_page_ranks_one_batch_not_the_whole_list(tmp_path, wide_catalog, monkeypatch):
+    """A new user's first screen must not wait for all 54 titles to be ranked."""
+    service = build_service(tmp_path, wide_catalog)
+    limits: list[int] = []
+    original = service.recommender.recommend
+
+    def counting(**kwargs: Any):
+        limits.append(kwargs["limit"])
+        return original(**kwargs)
+
+    monkeypatch.setattr(service.recommender, "recommend", counting)
+    # The client asks for two batches; a starter sequence answers with the one it has.
+    first = await service.page(RecommendPageRequest(limit=36))
+    assert limits == [18]
+    assert first["sequence"]["returned"] == 18
+    assert first["sequence"]["has_more"] is True
+    second = await service.page(RecommendPageRequest(limit=36, cursor=first["sequence"]["next_cursor"]))
+    third = await service.page(RecommendPageRequest(limit=36, cursor=second["sequence"]["next_cursor"]))
+    assert limits == [18, 18, 18]
+    assert third["sequence"]["has_more"] is False
+    shown = ids_of(first) + ids_of(second) + ids_of(third)
+    assert len(shown) == len(set(shown)) == 54
+
+    # Same list whatever the page size, and a later chunk never reorders an earlier one.
+    fresh = build_service(tmp_path, wide_catalog, name="chunks")
+    assert [a for page in await read_all(fresh, limit=7) for a in page] == shown
+
+
+@pytest.mark.asyncio
 async def test_likes_the_model_does_not_know_fall_back_to_a_starter_sequence(tmp_path, wide_catalog):
     service = build_service(tmp_path, wide_catalog)
     response = await service.page(RecommendPageRequest(liked_ids=[999_999]))
@@ -406,6 +435,7 @@ def test_the_endpoint_pages_without_any_shown_ids_in_the_request(tmp_path: Path,
         "window_size": WINDOW,
         "max_windows": 3,
         "starter_depth": 54,
+        "starter_chunk": 18,
     }
     assert len(shown) == len(set(shown)) == 3 * WINDOW
     assert 30 not in shown and not set(shown) & set(LIKED)
