@@ -1,6 +1,6 @@
 /** Same-origin API client. Vite proxies /api locally; FastAPI serves it in production. */
 import { S } from './strings.js';
-import { legacyHiddenTitles } from './session.js';
+import { legacyHiddenTitles, legacySeenTitles } from './session.js';
 
 export class ApiError extends Error {
   constructor(message, status, code) {
@@ -115,8 +115,8 @@ const lastN = (values, count) => (values.length > count ? values.slice(values.le
  * Like the user just made has to reach the model.
  *
  * Exclusion priority, highest first: likes that did not fit in `liked_ids`,
- * Not Interested, Want to Watch, skipped in this browsing sequence, and then
- * already-shown titles from newest to oldest. Likes that are sent in
+ * Not Interested, Already Watched, Want to Watch, skipped in this browsing
+ * sequence, and then already-shown titles from newest to oldest. Likes that are sent in
  * `liked_ids` need no exclusion entry; the server never recommends a profile
  * title.
  */
@@ -147,6 +147,8 @@ export function buildSequenceRequest(session, options = {}) {
   const wantedExclusions = positiveIds([
     ...likedOverflow.map(item => item.id),
     ...(session.notInterested || []).map(item => item.id),
+    // Already Watched is an exclusion and nothing more: not a Like, not a dislike.
+    ...(session.watched || []).map(item => item.id),
     ...(session.watchlist || []).map(item => item.id),
     ...(options.skippedIds || []),
     ...shownNewestFirst,
@@ -155,7 +157,9 @@ export function buildSequenceRequest(session, options = {}) {
 
   const hiddenTitles = legacyHiddenTitles(session);
   const excludedTitles = lastN(hiddenTitles, limits.excluded_titles);
-  const seen = (session.preferences?.seen_titles || []).filter(Boolean);
+  // Watched titles that carry an ID are excluded by ID above; only title-only
+  // entries from the legacy frontend still need to travel as titles.
+  const seen = legacySeenTitles(session);
   const seenTitles = lastN(seen, limits.seen_titles);
   const preferences = session.preferences || {};
 

@@ -59,3 +59,10 @@
 .hidden-titles li{display:flex;align-items:center;gap:6px;background:#f6f3ff;border:1px solid #e6defa;border-radius:999px;padding:5px 6px 5px 12px;font-size:12px;color:#5d5580}
 .hidden-titles li button{border:0;background:#fff;color:#7a65ac;border-radius:50%;width:22px;height:22px;display:grid;place-items:center}
 @media(max-width:760px){.card-action{font-size:10px;padding:5px 6px;gap:4px}.batch-note{align-items:flex-start}.collection-tabs button{padding:9px 12px;font-size:12px}}
+/* V2.1 Already Watched: seen, with no judgement. Neither pink (Liked) nor rose (Not Interested). */
+.card-top-actions .watched-btn{position:static;width:33px;height:33px;display:grid;place-items:center;border:0;border-radius:50%;background:rgba(255,255,255,.94);color:#645d79;box-shadow:0 2px 9px rgba(32,25,47,.14);cursor:pointer}
+.card-top-actions .watched-btn.seen{color:#1f8a70;background:#e4f6f0}
+.card-action.card-watched{color:#2c7f6b;border-color:#d3ece4;background:#f6fcfa}
+.card-action.card-watched:hover{background:#e7f6f1;border-color:#b9e0d4}
+.modal-actions .secondary-button[aria-pressed="true"]{background:#efe9ff;border-color:#cdbdfb}
+@media(max-width:760px){.card-top-actions .watched-btn{width:31px;height:31px}}

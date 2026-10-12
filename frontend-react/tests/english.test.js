@@ -56,6 +56,8 @@ test('the agreed terminology is used exactly',()=>{
   assert.equal(S.actions.liked,'Liked');
   assert.equal(S.actions.wantToWatch,'Want to Watch');
   assert.equal(S.actions.notInterested,'Not Interested');
+  assert.equal(S.actions.alreadyWatched,'Already Watched');
+  assert.match(S.forYou.tabAlreadyWatched(3),/^Already Watched \(3\)$/);
   assert.match(S.actions.replaceHint,/^Skip /);
   assert.equal(S.nav.forYou,'For You');
   assert.equal(S.nav.discover,'Discover');
@@ -71,6 +73,9 @@ test('wording matches behaviour: Skip is temporary, Not Interested is lasting',(
   assert.match(S.actions.replaceHint,/for now/);
   assert.match(S.recommendations.markedNotInterested('X'),/will not be recommended again/);
   assert.match(S.forYou.emptyWantBody,/not treated as watched or Liked/);
+  // Already Watched must say what it is not, so it cannot be read as a rating.
+  assert.match(S.actions.alreadyWatchedHint,/not a Like and not Not Interested/);
+  assert.match(S.recommendations.markedWatched('X'),/does not count as a Like or as Not Interested/);
   // Replace must never be described as a rejection.
   assert.doesNotMatch(`${S.actions.replaceHint} ${S.actions.replaceLabel('X')}`,/not interested|dislike/i);
 });

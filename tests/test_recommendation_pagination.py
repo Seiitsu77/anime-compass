@@ -424,3 +424,58 @@ def test_the_legacy_unpaged_endpoint_still_works(tmp_path: Path, wide_catalog):
     assert legacy.status_code == 200
     assert legacy.json()["diagnostics"]["recommendation_path"] == "fast"
     assert [item["id"] for item in legacy.json()["results"]] == [item["id"] for item in paged.json()["results"]]
+
+
+# ------------------------------------------------ exclusions name one title
+
+
+@pytest.mark.asyncio
+async def test_on_the_fast_path_an_excluded_title_does_not_hide_its_franchise(tmp_path, franchise_catalog):
+    """Already Watched and Want to Watch are about one title."""
+    service = build_service(tmp_path, franchise_catalog, windows=8)
+
+    # The user Likes franchise 50 and has watched one entry of franchise 3.
+    plain = [a for page in await read_all(service, limit=50, liked_ids=[500]) for a in page]
+    watched = next(anime_id for anime_id in plain if anime_id // 10 == 3)
+    filtered = [a for page in await read_all(service, limit=50, liked_ids=[500], excluded_ids=[watched]) for a in page]
+    assert watched not in filtered
+    assert 3 in {anime_id // 10 for anime_id in filtered}, "another entry of the franchise is still recommended"
+
+
+@pytest.mark.asyncio
+async def test_the_starter_path_keeps_the_hybrid_series_policy_unchanged(tmp_path, franchise_catalog):
+    """Recorded, not endorsed: with no Likes, an exclusion hides its whole franchise.
+
+    The hybrid seeds its one-per-series filter with every excluded title. That
+    is production behaviour and stays as it is until the policy evaluation in
+    experiments/v21_quality/SERIES_POLICY.md is reviewed. This test exists so a
+    change to it is a decision rather than an accident.
+    """
+    service = build_service(tmp_path, franchise_catalog)
+    starter = [a for page in await read_all(service) for a in page]
+    seen = starter[0]
+    after = [a for page in await read_all(service, excluded_ids=[seen]) for a in page]
+    assert seen not in after
+    assert seen // 10 not in {anime_id // 10 for anime_id in after}
+    assert len(after) == len(set(after)) == service.starter_depth
+
+
+@pytest.mark.asyncio
+async def test_a_watched_title_is_excluded_without_becoming_a_preference_signal(tmp_path, wide_catalog):
+    service = build_service(tmp_path, wide_catalog, debug=True)
+    plain = await service.page(RecommendPageRequest(liked_ids=LIKED))
+    watched = ids_of(plain)[0]
+    by_id = await service.page(RecommendPageRequest(liked_ids=LIKED, excluded_ids=[watched]))
+    by_title = await service.page(RecommendPageRequest(liked_ids=LIKED, seen_titles=[f"saga{watched} chronicle"]))
+
+    for response in (by_id, by_title):
+        assert watched not in ids_of(response)
+        # Same Likes, same folded-in user vector: nothing was learned from it.
+        assert (
+            response["diagnostics"]["debug"]["als_user_vector_sha256_16"]
+            == plain["diagnostics"]["debug"]["als_user_vector_sha256_16"]
+        )
+        assert response["diagnostics"]["known_positive_count"] == len(LIKED)
+        # Everything else keeps its order: the watched title only left a gap.
+        assert ids_of(response)[:17] == ids_of(plain)[1:18]
+    assert by_title["diagnostics"]["profile"]["excluded_titles_resolved"] == 1

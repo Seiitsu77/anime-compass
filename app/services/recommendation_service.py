@@ -554,6 +554,11 @@ class RecommendationService:
             seen_titles=list(request.seen_titles),
             session_profile=dict(request.session_profile),
             one_per_series=request.one_per_series,
+            # The hybrid keeps its production series policy here, which is
+            # broader than the fast path's: it hides the whole franchise of
+            # every excluded title, not only of Liked ones. Whether that is too
+            # aggressive is an open policy question (see
+            # experiments/v21_quality/SERIES_POLICY.md); it is not changed here.
             limit=self.starter_depth,
             diagnostics=diagnostics,
         )

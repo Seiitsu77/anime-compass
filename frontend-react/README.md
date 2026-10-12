@@ -27,12 +27,12 @@ The result of `npm run build` is in `dist/`. Do not deploy this prototype withou
 
 - **Home**: clean hero, restrained search, three primary filters, real catalog popularity sorting (not a fabricated live trending chart), recommendations, Agent CTA.
 - **Discover**: full `/api/search`, filtering, paging, details and Like button.
-- **For You**: My Collection (Liked, Want to Watch, Not Interested), up to 18 personalized `/api/recommend` picks with Replace, Not Interested and Next Batch, and profile JSON backup import/export.
+- **For You**: My Collection (Liked, Want to Watch, Already Watched, Not Interested), 18 personalized picks at a time with Replace, Already Watched, Not Interested and Next Batch, and profile JSON backup import/export.
 - **Agent**: `/api/agent` with `session_id` and previous messages passed as `history` for follow-up context.
 
 ## Existing browser Likes compatibility
 
-The original vanilla frontend stores an object in `localStorage.animeCompassSession` with fields `sessionId`, `liked`, and `preferences`. This app keeps those existing fields under **the same key** and adds two optional ones the legacy frontend ignores: `watchlist` (Want to Watch) and `notInterested`. Legacy session data still loads, and unit tests cover compatibility in both directions.
+The original vanilla frontend stores an object in `localStorage.animeCompassSession` with fields `sessionId`, `liked`, and `preferences`. This app keeps those existing fields under **the same key** and adds three optional ones the legacy frontend ignores: `watchlist` (Want to Watch), `watched` (Already Watched) and `notInterested`. Legacy session data still loads, and unit tests cover compatibility in both directions.
 
 **Important**: `localhost:5173` and the live Cloud Run URL have different browser origins and thus different localStorage. Existing likes will automatically be available only when this build is eventually served from the *same existing Cloud Run host*. During local development you can export the JSON from the old browser's DevTools or from a previous React session, then import it using **For You → Import backup**. Before ever switching a production page, export your current Likes backup.
 
@@ -59,7 +59,7 @@ The original vanilla frontend stores an object in `localStorage.animeCompassSess
 - `src/App.jsx` pages, data loading and navigation
 - `src/components/` card, filtering, navbar, Agent
 - `src/lib/api.js` same-origin FastAPI integration
-- `src/lib/session.js` legacy browser Likes schema preservation and the four feedback types
+- `src/lib/session.js` legacy browser Likes schema preservation and the feedback types; `FEEDBACK` is the contract
 - `src/lib/recommendationFeed.js` the browsing sequence: no repeats, no stale results, Skip without dislike
 - `src/lib/strings.js` every user-facing string, in English
 - `src/lib/diagnostics.js` development-only recommendation diagnostics
@@ -78,23 +78,36 @@ The interface is English only. Every user-facing string lives in
 or any source file contains non-English script. Anime titles and other catalog
 metadata are shown exactly as the catalog provides them.
 
-### Four kinds of feedback
+### Five kinds of feedback
 
 | Action | What it means | Stored | Sent to the recommender |
 |---|---|---|---|
 | **Like** | Positive preference | `liked` | `liked_ids`: the only input to the ALS profile |
 | **Want to Watch** | Future intent | `watchlist` | An exclusion. Never a like, never "seen", never a rating |
+| **Already Watched** | Seen, with no judgement | `watched`, plus the legacy `seen_titles` | An exclusion. Never a like and never a dislike |
 | **Not Interested** | Explicit negative feedback | `notInterested`, plus the legacy `disliked_titles` and `excluded_titles` | An exclusion, and a disliked title for the server-side profile |
 | **Replace** (Skip) | "Not this one right now" | Nothing | An exclusion for the current page session only |
+
+A title holds at most one of the four stored kinds: the latest action wins, and
+undoing it leaves the title with no state. The table is `FEEDBACK` in
+`src/lib/session.js`, and `tests/feedback.test.js` checks every row of it: what
+is stored, which legacy fields are written, what the recommender is sent, and
+what the server-side profile is sent.
 
 - **Replace** used to call `rejectAnime()`, which wrote a permanent dislike.
   It now records nothing: the title is skipped until the page is reloaded and
   another eligible recommendation takes its place.
 - **Not Interested** is the separate, explicit action. It can be undone from
   the notice or from My Collection → Not Interested.
+- **Already Watched** hides a title you have seen. It tells the recommender
+  nothing else: the ALS profile is unchanged, and the title is never reported as
+  disliked. A recommendation offers it as one of three labelled answers
+  (Replace, Already Watched, Not Interested); every other card has it as a
+  toggle beside Like and Want to Watch. Offline, knowing what a user has
+  already seen is worth about as much ranking quality as the reranker.
 - Only a change to the Liked set recomputes recommendations, because only Likes
-  move the model. Want to Watch, Not Interested and Replace fill the slot of the
-  card in place, so a bookmark no longer sends the user back to the first
+  move the model. Want to Watch, Already Watched, Not Interested and Replace
+  fill the slot of the card in place, so a bookmark no longer sends the user back to the first
   batch.
 
 ### Guarantees, and where they are enforced
@@ -191,7 +204,8 @@ npm run dev
   written in-project and respecting `prefers-reduced-motion`.
 
 If you roll back to the **old vanilla frontend** and change Likes there, it
-rewrites `animeCompassSession` without `watchlist` and `notInterested`; export a
-backup first. Negative feedback survives that round trip, because it is also
-stored in the legacy title fields. This frontend creates no server-side account
+rewrites `animeCompassSession` without `watchlist`, `watched` and
+`notInterested`; export a backup first. Watched titles and negative feedback
+survive that round trip, because they are also stored in the legacy title
+fields. This frontend creates no server-side account
 and no multi-device collection.

@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRight, ArrowUpRight, Bookmark, Check, ChevronDown, Compass, Heart, RefreshCw, Search, Sparkles, ThumbsDown, X } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Bookmark, Check, ChevronDown, Compass, Eye, Heart, RefreshCw, Search, Sparkles, ThumbsDown, X } from 'lucide-react';
 import { Navbar } from './components/Navbar.jsx';
 import { AnimeCard } from './components/AnimeCard.jsx';
 import { AgentPage } from './components/AgentPage.jsx';
 import { EMPTY_FILTERS, FilterBar } from './components/FilterBar.jsx';
 import { api, buildSequenceRequest, createPreferenceSync, recommend, recommendPage, resolveLimits, resolvePagination, searchCatalog } from './lib/api.js';
-import { clearHiddenTitle, clearNotInterested, legacyHiddenTitles, loadSession, markNotInterested, normalizeSession, persistSession, toggleLiked, toggleWatchlist } from './lib/session.js';
+import { clearHiddenTitle, clearNotInterested, clearSeenTitle, clearWatched, legacyHiddenTitles, legacySeenTitles, loadSession, markNotInterested, markWatched, normalizeSession, persistSession, toggleLiked, toggleWatched, toggleWatchlist } from './lib/session.js';
 import { BATCH_SIZE } from './lib/recommendationPool.js';
 import { createAutoSource, createCursorSource, createExclusionSource, createRecommendationFeed } from './lib/recommendationFeed.js';
 import { createDiagnosticsLog } from './lib/diagnostics.js';
@@ -86,6 +86,8 @@ export function App() {
   function navigate(target) {location.hash=target==='home'?'#home':`#${target}`;setPage(target);window.scrollTo({top:0,behavior:'smooth'});}
   useEffect(()=>{const onHash=()=>setPage(hashPage());window.addEventListener('hashchange',onHash);return()=>window.removeEventListener('hashchange',onHash);},[]);
   useEffect(()=>{if(!persistSession(session))setNotice(S.status.storageUnavailable);},[session]);
+  // A status line about one action should not greet the user on another page later.
+  useEffect(()=>{setRecNotice(null);},[page]);
   useEffect(()=>{
     let active=true;let timer;
     const started=Date.now();
@@ -117,6 +119,7 @@ export function App() {
   },[ready]);
   const likedIds=new Set(session.liked.map(x=>Number(x.id)));
   const watchIds=new Set((session.watchlist||[]).map(x=>Number(x.id)));
+  const watchedIds=new Set((session.watched||[]).map(x=>Number(x.id)));
   const likedKey=session.liked.map(x=>Number(x.id)).join(',');
 
   // Only Likes are profile inputs, so only a change to them recomputes. Want to
@@ -189,6 +192,27 @@ export function App() {
     commit(clearNotInterested(sessionRef.current,item));
     setRecNotice({text:S.recommendations.notInterestedRemoved(item.title)});
   }
+  function unwatch(item) {
+    commit(clearWatched(sessionRef.current,item));
+    setRecNotice({text:S.recommendations.watchedRemoved(item.title)});
+  }
+  function confirmWatched(next,item) {
+    // Already Watched only hides the title. It is never sent as a Like or as
+    // negative feedback, so nothing is recomputed: the card's slot is refilled.
+    commit(next);
+    settle(feed.drop(next,item),()=>setRecNotice({
+      text:S.recommendations.markedWatched(item.title),
+      undo:()=>unwatch(item),
+    }));
+  }
+  function markRecommendationWatched(item) {
+    confirmWatched(markWatched(sessionRef.current,item),item);
+  }
+  function toggleAlreadyWatched(item) {
+    const next=toggleWatched(sessionRef.current,item);
+    if((next.watched||[]).some(x=>sameAnime(x,item)))confirmWatched(next,item);
+    else unwatch(item);
+  }
   function rejectRecommendation(item) {
     const next=markNotInterested(sessionRef.current,item);
     commit(next);
@@ -249,24 +273,42 @@ export function App() {
   }
   const filtersSection=<FilterBar filters={filters} setFilters={changeFilters} genres={health?.catalog?.genres||[]} formats={health?.catalog?.types||[]}/>;
   const recommendationsLocked=loadingRec||refreshing;
-  const renderCards=(items,{compact=false,recommendation=false,restorable=false}={})=>items.map(item=><AnimeCard
+  // A recommendation offers three labelled answers: Replace, Already Watched and
+  // Not Interested. Everywhere else Already Watched is a toggle beside Like and
+  // Want to Watch.
+  const restore={
+    hidden:{onRestore:restoreInterest,restoreText:S.actions.notInterestedRemove,restoreLabel:(item)=>S.actions.notInterestedRemoveLabel(item.title)},
+    watched:{onRestore:unwatch,restoreText:S.actions.alreadyWatchedRemove,restoreLabel:(item)=>S.actions.alreadyWatchedRemoveLabel(item.title)},
+  };
+  const renderCards=(items,{compact=false,recommendation=false,restorable=''}={})=>items.map(item=><AnimeCard
     key={item.id} anime={item} compact={compact} liked={likedIds.has(Number(item.id))}
-    watchlisted={watchIds.has(Number(item.id))} onToggleLike={likeAnime}
+    watchlisted={watchIds.has(Number(item.id))} watched={watchedIds.has(Number(item.id))} onToggleLike={likeAnime}
     onToggleWatchlist={saveToWatchlist} onDetails={openDetails}
+    onToggleWatched={recommendation||restorable?undefined:toggleAlreadyWatched}
     onReplace={recommendation?replaceRecommendation:undefined}
+    onWatched={recommendation?markRecommendationWatched:undefined}
     onNotInterested={recommendation?rejectRecommendation:undefined}
-    onRestore={restorable?restoreInterest:undefined}
+    onRestore={restore[restorable]?.onRestore}
+    restoreText={restore[restorable]?.restoreText}
+    restoreLabel={restore[restorable]?.restoreLabel(item)}
     actionsDisabled={recommendation&&recommendationsLocked}
   />);
   // Re-filtered on every render, so a card disappears the moment it is saved or rejected.
   const visibleRecommendations=feed.eligible(recommendations,session);
-  const collections={liked:session.liked,want:session.watchlist||[],hidden:session.notInterested||[]};
+  const collections={liked:session.liked,want:session.watchlist||[],watched:session.watched||[],hidden:session.notInterested||[]};
   const currentCollection=collections[collectionTab];
   const shownCollection=expandCollection?currentCollection:currentCollection.slice(0,COLLECTION_PREVIEW);
   const hiddenTitles=legacyHiddenTitles(session);
+  const seenTitles=legacySeenTitles(session);
+  // Title-only entries from the legacy frontend, listed under the tab they belong to.
+  const titleOnly={
+    hidden:{titles:hiddenTitles,heading:S.forYou.hiddenByTitleHeading,body:S.forYou.hiddenByTitleBody,clear:clearHiddenTitle,label:S.actions.notInterestedRemoveLabel,hint:S.actions.notInterestedRemove},
+    watched:{titles:seenTitles,heading:S.forYou.seenByTitleHeading,body:S.forYou.seenByTitleBody,clear:clearSeenTitle,label:S.actions.alreadyWatchedRemoveLabel,hint:S.actions.alreadyWatchedRemove},
+  }[collectionTab];
   const emptyCollection={
     liked:[S.forYou.emptyLikedTitle,S.forYou.emptyLikedBody],
     want:[S.forYou.emptyWantTitle,S.forYou.emptyWantBody],
+    watched:[S.forYou.emptyWatchedTitle,S.forYou.emptyWatchedBody],
     hidden:[S.forYou.emptyNotInterestedTitle,S.forYou.emptyNotInterestedBody],
   }[collectionTab];
   const selectTab=(tab)=>{setCollectionTab(tab);setExpandCollection(false);};
@@ -315,15 +357,16 @@ export function App() {
           <div className="collection-tabs" role="tablist" aria-label={S.forYou.collectionTabsLabel}>
             <button role="tab" aria-selected={collectionTab==='liked'} className={collectionTab==='liked'?'selected':''} onClick={()=>selectTab('liked')}><Heart size={15}/> {S.forYou.tabLiked(session.liked.length)}</button>
             <button role="tab" aria-selected={collectionTab==='want'} className={collectionTab==='want'?'selected':''} onClick={()=>selectTab('want')}><Bookmark size={15}/> {S.forYou.tabWantToWatch(collections.want.length)}</button>
+            <button role="tab" aria-selected={collectionTab==='watched'} className={collectionTab==='watched'?'selected':''} onClick={()=>selectTab('watched')}><Eye size={15}/> {S.forYou.tabAlreadyWatched(collections.watched.length+seenTitles.length)}</button>
             <button role="tab" aria-selected={collectionTab==='hidden'} className={collectionTab==='hidden'?'selected':''} onClick={()=>selectTab('hidden')}><ThumbsDown size={15}/> {S.forYou.tabNotInterested(collections.hidden.length+hiddenTitles.length)}</button>
           </div>
           <div className="backup-actions"><button onClick={exportBackup}>{S.forYou.exportBackup}</button><button onClick={()=>fileInput.current?.click()}>{S.forYou.importBackup}</button><input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={e=>importBackup(e.target.files?.[0])}/></div>
         </div>
         {currentCollection.length?<>
-          <div className="anime-grid liked-grid">{renderCards(shownCollection,{restorable:collectionTab==='hidden'})}</div>
+          <div className="anime-grid liked-grid">{renderCards(shownCollection,{restorable:restore[collectionTab]?collectionTab:''})}</div>
           {currentCollection.length>COLLECTION_PREVIEW&&<div className="collection-expand"><button onClick={()=>setExpandCollection(v=>!v)} aria-expanded={expandCollection}>{expandCollection?S.forYou.showLess:S.forYou.showMore(currentCollection.length-COLLECTION_PREVIEW)} <ChevronDown className={expandCollection?'rotated':''} size={16}/></button></div>}
-        </>:!(collectionTab==='hidden'&&hiddenTitles.length)&&<div className="empty-profile"><Compass size={32}/><h2>{emptyCollection[0]}</h2><p>{emptyCollection[1]}</p><button className="primary-button" onClick={()=>navigate('discover')}>{S.forYou.exploreAnime} <ArrowRight size={16}/></button></div>}
-        {collectionTab==='hidden'&&hiddenTitles.length>0&&<div className="hidden-titles"><h3>{S.forYou.hiddenByTitleHeading}</h3><p>{S.forYou.hiddenByTitleBody}</p><ul>{hiddenTitles.map(title=><li key={title}><span>{title}</span><button onClick={()=>commit(clearHiddenTitle(sessionRef.current,title))} aria-label={S.actions.notInterestedRemoveLabel(title)} title={S.actions.notInterestedRemove}><X size={13}/></button></li>)}</ul></div>}
+        </>:!titleOnly?.titles.length&&<div className="empty-profile"><Compass size={32}/><h2>{emptyCollection[0]}</h2><p>{emptyCollection[1]}</p><button className="primary-button" onClick={()=>navigate('discover')}>{S.forYou.exploreAnime} <ArrowRight size={16}/></button></div>}
+        {titleOnly?.titles.length>0&&<div className="hidden-titles"><h3>{titleOnly.heading}</h3><p>{titleOnly.body}</p><ul>{titleOnly.titles.map(title=><li key={title}><span>{title}</span><button onClick={()=>commit(titleOnly.clear(sessionRef.current,title))} aria-label={titleOnly.label(title)} title={titleOnly.hint}><X size={13}/></button></li>)}</ul></div>}
         <section className="catalog-section">
           <div className="recommend-heading"><SectionTitle eyebrow={S.forYou.recommendationsEyebrow} title={session.liked.length?S.forYou.recommendationsTitlePersonal:S.forYou.recommendationsTitleStarter} caption={session.liked.length?S.forYou.recommendationsCaptionPersonal(BATCH_SIZE):S.forYou.recommendationsCaptionStarter}/>
           <button className="refresh-batch" disabled={recBusy||recommendationsLocked||!!recommendError} onClick={nextBatch} title={S.forYou.nextBatchHint}><RefreshCw className={recBusy?'spinning':''} size={17}/> {recBusy?S.forYou.loading:S.forYou.nextBatch}</button></div>
@@ -336,6 +379,6 @@ export function App() {
       {page==='agent'&&<AgentPage session={session} messages={messages} setMessages={setMessages} syncProfile={syncRef.current.push}/>}
     </main>
     <footer className="site-footer"><span><Compass size={15}/> {S.footer.brand}</span><span>{S.footer.note}</span></footer>
-    {detail&&<div className="modal-layer" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)setDetail(null);}}><div className="modal-card" role="dialog" aria-modal="true" aria-label={S.details.dialogLabel(detail.title)}><button className="modal-close" onClick={()=>setDetail(null)} aria-label={S.details.close}><X size={19}/></button><div className="modal-content"><div className="modal-poster">{detail.image_url&&<img src={detail.image_url} alt={S.actions.posterAlt(detail.title)}/>}</div><div className="modal-description"><span className="kicker">{S.details.kicker}</span><h2>{detail.title}</h2><p className="modal-meta">{[detail.type,detail.start_year,detail.episodes?S.details.episodes(detail.episodes):null].filter(Boolean).join(' · ')}</p>{detail.score&&<p className="modal-score">{S.details.score(Number(detail.score).toFixed(2))}</p>}{detail.genres?.length>0&&<div className="genre-tags">{detail.genres.slice(0,6).map(g=><span key={g}>{g}</span>)}</div>}<p className="synopsis">{detail.synopsis||detail.description||S.details.noSynopsis}</p>{detailBusy&&<small>{S.details.loadingMore}</small>}<div className="modal-actions"><button className="primary-button" aria-pressed={likedIds.has(Number(detail.id))} onClick={()=>likeAnime(detail)}>{likedIds.has(Number(detail.id))?<Check size={17}/>:<Heart size={17}/>} {likedIds.has(Number(detail.id))?S.actions.liked:S.actions.like}</button><button className="secondary-button" aria-pressed={watchIds.has(Number(detail.id))} onClick={()=>saveToWatchlist(detail)}><Bookmark size={17} fill={watchIds.has(Number(detail.id))?'currentColor':'none'}/> {watchIds.has(Number(detail.id))?S.actions.wantToWatchAdded:S.actions.wantToWatch}</button></div></div></div></div></div>}
+    {detail&&<div className="modal-layer" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)setDetail(null);}}><div className="modal-card" role="dialog" aria-modal="true" aria-label={S.details.dialogLabel(detail.title)}><button className="modal-close" onClick={()=>setDetail(null)} aria-label={S.details.close}><X size={19}/></button><div className="modal-content"><div className="modal-poster">{detail.image_url&&<img src={detail.image_url} alt={S.actions.posterAlt(detail.title)}/>}</div><div className="modal-description"><span className="kicker">{S.details.kicker}</span><h2>{detail.title}</h2><p className="modal-meta">{[detail.type,detail.start_year,detail.episodes?S.details.episodes(detail.episodes):null].filter(Boolean).join(' · ')}</p>{detail.score&&<p className="modal-score">{S.details.score(Number(detail.score).toFixed(2))}</p>}{detail.genres?.length>0&&<div className="genre-tags">{detail.genres.slice(0,6).map(g=><span key={g}>{g}</span>)}</div>}<p className="synopsis">{detail.synopsis||detail.description||S.details.noSynopsis}</p>{detailBusy&&<small>{S.details.loadingMore}</small>}<div className="modal-actions"><button className="primary-button" aria-pressed={likedIds.has(Number(detail.id))} onClick={()=>likeAnime(detail)}>{likedIds.has(Number(detail.id))?<Check size={17}/>:<Heart size={17}/>} {likedIds.has(Number(detail.id))?S.actions.liked:S.actions.like}</button><button className="secondary-button" aria-pressed={watchIds.has(Number(detail.id))} onClick={()=>saveToWatchlist(detail)}><Bookmark size={17} fill={watchIds.has(Number(detail.id))?'currentColor':'none'}/> {watchIds.has(Number(detail.id))?S.actions.wantToWatchAdded:S.actions.wantToWatch}</button><button className="secondary-button" aria-pressed={watchedIds.has(Number(detail.id))} title={S.actions.alreadyWatchedHint} onClick={()=>toggleAlreadyWatched(detail)}>{watchedIds.has(Number(detail.id))?<Check size={17}/>:<Eye size={17}/>} {S.actions.alreadyWatched}</button></div></div></div></div></div>}
   </div>;
 }

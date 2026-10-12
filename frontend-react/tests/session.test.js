@@ -143,7 +143,7 @@ test('what this app saves is still readable by the legacy vanilla frontend',()=>
   assert.deepEqual(Object.keys(legacyState.preferences).sort(),Object.keys(defaultPreferences()).sort());
   assert.deepEqual(legacyState.preferences.disliked_titles,['C']);
   assert.deepEqual(legacyState.preferences.excluded_titles,['C']);
-  assert.deepEqual(Object.keys(saved).sort(),['liked','notInterested','preferences','sessionId','watchlist']);
+  assert.deepEqual(Object.keys(saved).sort(),['liked','notInterested','preferences','sessionId','watched','watchlist']);
 });
 
 test('a storage failure is reported instead of thrown',()=>{
