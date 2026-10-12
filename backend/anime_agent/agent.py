@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from functools import lru_cache
 from typing import Any
 
 from .agent_policy import SYSTEM_POLICY
@@ -283,6 +284,11 @@ class AnimeAgent:
         self.entity_resolver = recommender.entity_resolver
         self.get_session_profile = get_session_profile or (lambda _session_id: {})
         self.update_session_preferences = update_session_preferences or (lambda _session_id, _patch: {})
+        # One chat turn asks "which catalog titles does this text name?" of the
+        # same message several times over -- intent rules, normalization, the
+        # write gate -- and every answer is a full catalog search. The answer
+        # depends only on the text and the catalog, so it is kept per text.
+        self._scan_titles = lru_cache(maxsize=256)(self._scan_mentioned_catalog_titles)
         self.tools: dict[str, Callable[[dict[str, Any]], Any]] = {
             "search_anime": self._tool_search,
             "rank_catalog": self._tool_rank_catalog,
@@ -2820,6 +2826,10 @@ class AnimeAgent:
         return list(dict.fromkeys(titles))
 
     def _mentioned_catalog_titles(self, text: str) -> list[str]:
+        # A fresh list each time: callers extend what they are given.
+        return list(self._scan_titles(text))
+
+    def _scan_mentioned_catalog_titles(self, text: str) -> tuple[str, ...]:
         text_key = text.casefold()
         text_tokens = set(tokenize(text))
         titles: list[str] = []
@@ -2842,7 +2852,7 @@ class AnimeAgent:
             if mentioned:
                 titles.append(title)
 
-        return list(dict.fromkeys(titles))
+        return tuple(dict.fromkeys(titles))
 
     def _canonical_title_key(self, value: str) -> str:
         resolved = self.recommender.resolve_titles([value])

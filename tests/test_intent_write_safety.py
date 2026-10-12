@@ -757,6 +757,32 @@ def test_without_is_not_negative_feedback_about_a_title(
     assert not authorization.permits("disliked_titles")
 
 
+def test_the_catalog_title_scan_runs_once_per_text(
+    recorded_agent: tuple[AnimeAgent, list[dict[str, Any]]],
+) -> None:
+    """The write gate asks the same question the intent rules already asked; it must not pay for it again."""
+    agent, _ = recorded_agent
+    searches: list[str] = []
+    original = agent.recommender.search
+
+    def counting_search(query: str, *args: Any, **kwargs: Any) -> Any:
+        searches.append(query)
+        return original(query, *args, **kwargs)
+
+    agent.recommender.search = counting_search  # type: ignore[method-assign]
+    try:
+        message = "A sentence nobody has asked before about Cowboy Bebop and Trigun."
+        first = agent._mentioned_catalog_titles(message)
+        first.append("a caller extending its own copy")
+        agent._preference_write_authorization(message)
+        second = agent._mentioned_catalog_titles(message)
+    finally:
+        agent.recommender.search = original  # type: ignore[method-assign]
+
+    assert searches == [message]
+    assert set(second) == {"Cowboy Bebop", "Trigun"}
+
+
 def test_rule_fallback_no_longer_excludes_the_title_it_was_asked_to_introduce(
     recorded_agent: tuple[AnimeAgent, list[dict[str, Any]]],
 ) -> None:
