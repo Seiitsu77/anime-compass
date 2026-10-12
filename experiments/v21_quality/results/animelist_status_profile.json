@@ -1,0 +1,153 @@
+{
+  "source": {
+    "file": "animelist.csv",
+    "bytes": 2031058307,
+    "rows": 109224747,
+    "invalid_rows": 3
+  },
+  "users": 325770,
+  "rows_with_an_unlisted_status_code": 537,
+  "share_of_rows_on_catalog_titles": 0.982282906517959,
+  "by_status": {
+    "currently_watching": {
+      "rows": 5228658,
+      "share_of_rows": 0.0478706363459181,
+      "rated": 1485402,
+      "unrated": 3743256,
+      "share_rated": 0.28408857492687417,
+      "mean_rating_when_rated": 7.894992735973157,
+      "share_8_or_higher_when_rated": 0.6247325639793133,
+      "share_5_or_lower_when_rated": 0.0641503108249484,
+      "episodes_watched": {
+        "0": 1754601,
+        "1-2": 1045633,
+        "3-5": 774735,
+        "6-12": 982779,
+        "13-25": 351161,
+        "26+": 319749
+      }
+    },
+    "completed": {
+      "rows": 68089751,
+      "share_of_rows": 0.623391261965329,
+      "rated": 57633278,
+      "unrated": 10456473,
+      "share_rated": 0.8464310289517728,
+      "mean_rating_when_rated": 7.510788732162693,
+      "share_8_or_higher_when_rated": 0.5401750877331669,
+      "share_5_or_lower_when_rated": 0.10976948075034011,
+      "episodes_watched": {
+        "0": 110955,
+        "1-2": 18638156,
+        "3-5": 2497496,
+        "6-12": 22051447,
+        "13-25": 17316907,
+        "26+": 7474790
+      }
+    },
+    "on_hold": {
+      "rows": 3700514,
+      "share_of_rows": 0.03387981390004448,
+      "rated": 1056358,
+      "unrated": 2644156,
+      "share_rated": 0.28546250601943407,
+      "mean_rating_when_rated": 7.205225879862698,
+      "share_8_or_higher_when_rated": 0.41871884342240034,
+      "share_5_or_lower_when_rated": 0.1125792581681589,
+      "episodes_watched": {
+        "0": 1079228,
+        "1-2": 923791,
+        "3-5": 678864,
+        "6-12": 587679,
+        "13-25": 232657,
+        "26+": 198295
+      }
+    },
+    "dropped": {
+      "rows": 4266591,
+      "share_of_rows": 0.03906249485006804,
+      "rated": 1947440,
+      "unrated": 2319151,
+      "share_rated": 0.45643934466650304,
+      "mean_rating_when_rated": 4.8064597625600785,
+      "share_8_or_higher_when_rated": 0.06670860206219448,
+      "share_5_or_lower_when_rated": 0.6351718153062482,
+      "episodes_watched": {
+        "0": 928800,
+        "1-2": 1381084,
+        "3-5": 949462,
+        "6-12": 650588,
+        "13-25": 196354,
+        "26+": 160303
+      }
+    },
+    "plan_to_watch": {
+      "rows": 27938693,
+      "share_of_rows": 0.2557908764702621,
+      "rated": 275155,
+      "unrated": 27663538,
+      "share_rated": 0.009848527989480396,
+      "mean_rating_when_rated": 7.873445875960822,
+      "share_8_or_higher_when_rated": 0.6183532917809962,
+      "share_5_or_lower_when_rated": 0.10785193799858261,
+      "episodes_watched": {
+        "0": 27562206,
+        "1-2": 226082,
+        "3-5": 55216,
+        "6-12": 51273,
+        "13-25": 28208,
+        "26+": 15708
+      }
+    }
+  },
+  "relation_to_training_file": {
+    "completed_and_rated_rows": 57633278,
+    "rating_complete_rows": 57633278,
+    "matches_rating_complete": true,
+    "share_of_animelist_the_models_currently_use": 0.5276577073048576,
+    "rows_the_models_never_see": 51591466
+  },
+  "additional_signal": {
+    "completed_but_unrated": 10456473,
+    "started_not_finished": 8929172,
+    "dropped": 4266591,
+    "plan_to_watch": 27938693,
+    "engaged_but_unseen_per_completed_rated_row": 0.3363620059924407
+  },
+  "dropped_like_rate_by_progress": {
+    "0": {
+      "rated": 186813,
+      "share_8_or_higher": 0.08115602233249292
+    },
+    "1-2": {
+      "rated": 620862,
+      "share_8_or_higher": 0.04069825500674868
+    },
+    "3-5": {
+      "rated": 510157,
+      "share_8_or_higher": 0.046419043549338734
+    },
+    "6-12": {
+      "rated": 387275,
+      "share_8_or_higher": 0.06961203279323479
+    },
+    "13-25": {
+      "rated": 126928,
+      "share_8_or_higher": 0.12067471322324468
+    },
+    "26+": {
+      "rated": 115405,
+      "share_8_or_higher": 0.20384732030674582
+    }
+  },
+  "per_user": {
+    "users_with_a_plan_to_watch_list": 0.903769530650459,
+    "median_plan_to_watch_entries": 33.0,
+    "mean_plan_to_watch_entries": 85.7620192160113,
+    "users_with_no_completed_rated_title": 0.04822727691315959,
+    "users_with_no_completed_rated_title_but_other_engagement": 0.04539091997421494,
+    "median_unseen_engagement_per_user": 22.0,
+    "median_completed_rated_per_user": 104.0
+  },
+  "runtime_seconds": 20.9
+}
