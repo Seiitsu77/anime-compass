@@ -31,6 +31,51 @@ EntityType = Literal[
 ]
 EntityRelation = Literal["direct", "reference", "exclude", "watched", "director_of", "related_to"]
 
+# The generation schema leaves `relation` as a free string (see
+# `provider_json_schema`), so the model words it its own way. Live, every
+# "anime similar to X" request came back with relation "similar_to" -- and that
+# one unrecognised word rejected the whole intent, sent the commonest request
+# down the rule fallback, and counted toward the circuit breaker.
+#
+# Only `relation` is read tolerantly. It has a safe reading when unrecognised;
+# an unknown `entity_type` does not, and is still a validation error.
+_ENTITY_RELATIONS = frozenset({"direct", "reference", "exclude", "watched", "director_of", "related_to"})
+_ENTITY_RELATION_ALIASES = {
+    "similar": "reference",
+    "similar_to": "reference",
+    "like": "reference",
+    "example": "reference",
+    "seed": "reference",
+    "reference_title": "reference",
+    "excluded": "exclude",
+    "exclusion": "exclude",
+    "avoid": "exclude",
+    "not": "exclude",
+    "seen": "watched",
+    "already_watched": "watched",
+    "already_seen": "watched",
+}
+
+
+def _label_key(value: object) -> str:
+    return "_".join(str(value).strip().casefold().replace("-", " ").replace("_", " ").split())
+
+
+def _tolerant_mention(item: object) -> object:
+    """One provider-written entity mention with its relation made canonical.
+
+    An unrecognised relation falls back to what omitting it means: a title is
+    a reference, anything else is "direct". Whether "direct" becomes a hard
+    constraint is still decided from the user's message, not from this label.
+    """
+    if not isinstance(item, dict) or item.get("relation") is None:
+        return item
+    relation = _label_key(item["relation"])
+    relation = _ENTITY_RELATION_ALIASES.get(relation, relation)
+    if relation not in _ENTITY_RELATIONS:
+        relation = "reference" if _label_key(item.get("entity_type") or "anime") == "anime" else "direct"
+    return {**item, "relation": relation}
+
 
 def _is_nameable(value: str) -> bool:
     """True when a string could plausibly name a catalog entity.
@@ -112,6 +157,13 @@ class AgentIntent(BaseModel):
         if isinstance(value, str) and value.strip().casefold() == "conversational":
             return "conversation"
         return value
+
+    @field_validator("entity_mentions", mode="before")
+    @classmethod
+    def tolerate_provider_labels(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        return [_tolerant_mention(item) for item in value]
 
     @field_validator("reference_result_indices", "watched_result_indices")
     @classmethod

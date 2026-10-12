@@ -231,7 +231,18 @@ class CatalogToolRegistry:
             {"search_entities", "resolve_entity"}.intersection(executed)
         )
         unresolved_details = intent.intent == "details" and "search_entities" in executed
-        if primary and primary not in executed and not unresolved_constraint and not unresolved_details:
+        # "Tell me more about the second one" with no previous list is answered
+        # by asking for one. No tool runs, and that is the correct outcome, not
+        # a contract violation: treated as one, it was re-run through the rule
+        # fallback, failed the same check there, and surfaced as HTTP 500.
+        unresolved_reference = response_mode == "catalog_context_error" and not validated
+        if (
+            primary
+            and primary not in executed
+            and not unresolved_constraint
+            and not unresolved_details
+            and not unresolved_reference
+        ):
             raise ToolContractError(f"Expected {primary} was not executed for {intent.intent} intent")
         if intent.intent == "conversation" and validated:
             raise ToolContractError("Conversation intent cannot execute catalog tools")

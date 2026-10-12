@@ -17,6 +17,16 @@ from .intent import (
     parse_structured_intent,
 )
 from .recommender import AnimeRecommender, normalize_label, series_key, tokenize
+from .write_policy import (
+    DISLIKED,
+    EXCLUDED,
+    WATCHED,
+    PreferenceWriteAuthorization,
+    PreferenceWriteGate,
+    preference_signals,
+    states_negative_preference,
+    without_negated_requests,
+)
 
 # The behavioural half comes from the one shared policy, so this path cannot
 # drift away from the orchestrated one. Only the legacy tool-call syntax, which
@@ -46,6 +56,7 @@ INTRODUCTION_PATTERNS = (
     "introduce ",
     "introduction to ",
     "tell me about ",
+    "tell me more about ",
     "give me an overview of ",
     "what is ",
     "what's ",
@@ -53,6 +64,8 @@ INTRODUCTION_PATTERNS = (
     "describe ",
     "explain ",
     "synopsis of ",
+    "summary of ",
+    "premise of ",
     "plot of ",
     "characters in ",
     "cast of ",
@@ -108,34 +121,47 @@ RECOMMENDATION_FOLLOWUP_PATTERNS = (
     "weekend",
 )
 
-NEGATIVE_FEEDBACK_PATTERNS = (
-    "don't like",
-    "don't want",
-    "do not like",
-    "do not want",
-    "didn't like",
-    "did not like",
-    "without",
-    "not like",
-    "dislike",
-    "disliked",
-    "hate",
-    "hated",
-    "not interested",
-    "no more",
-    "avoid",
-    "exclude",
-    "not these",
-    "none of these",
-    "bad recommendations",
-    "same recommendations",
-    "was not for me",
-    "wasn't for me",
-    "not my kind of anime",
-    "not my thing",
-    "do not show me things like this",
-    "don't show me things like this",
-    "not interested in this kind",
+# What counts as negative feedback is defined in `write_policy`, word-bounded
+# and in one place. It used to be a substring list here, and "without" was on
+# it: "Introduce Cowboy Bebop without spoilers" was read as a rejection, routed
+# to a session write, and -- on the rule path -- stored Cowboy Bebop as excluded.
+
+# Words that mark a request to be told about a title rather than to change
+# anything. "Without spoilers" and "no spoilers" constrain how an answer is
+# written; they say nothing about taste.
+INFORMATION_REQUEST_QUALIFIERS = re.compile(
+    r"\b(?:spoilers?|spoiler[- ]free|synopsis|premise|plot|storyline|summary|overview)\b"
+)
+
+# The negation that puts a title out of a request, matched against the clause
+# immediately before the title. Word-bounded: unanchored, "no" matched the end
+# of "piano" and excluded whatever title followed it.
+TITLE_EXCLUSION_CUE = re.compile(
+    r"(?:^|\s)(?:not|no|without|except|anything but|exclude|excluding|avoid|"
+    r"(?:don t|dont|do not|never|stop)\s+(?:ever\s+)?"
+    r"(?:include|including|want|recommend|recommending|suggest|suggesting|show|showing))"
+    r"(?:\s+\S+){0,6}\s*$"
+)
+
+# The same, plus plain dislike ("I didn't like X", "I hated X"). Used only to
+# decide whether a negative statement is about a catalog title at all; it never
+# removes a title from a request.
+TITLE_REJECTION_CUE = re.compile(
+    r"(?:^|\s)(?:not|no|without|except|anything but|exclude|excluding|avoid|skip|"
+    r"dislike|disliked|hate|hated|"
+    r"(?:don t|dont|do not|didn t|didnt|did not|never|stop)\s+(?:ever\s+|really\s+)?"
+    r"(?:include|including|want|recommend|recommending|suggest|suggesting|show|showing|"
+    r"like|liked|enjoy|enjoyed))"
+    r"(?:\s+\S+){0,6}\s*$"
+)
+
+# Asking to find something in the catalog by name.
+CATALOG_LOOKUP = re.compile(r"\b(?:search|look\s*up)\b", re.IGNORECASE)
+
+# Asking for catalog items, as opposed to reporting a preference.
+CATALOG_REQUEST = re.compile(
+    r"\b(?:recommend|suggest|find|show|give|list|rank|sort|looking for|want|need)\b",
+    re.IGNORECASE,
 )
 
 NEW_BATCH_PATTERNS = (
@@ -364,8 +390,8 @@ class AnimeAgent:
             intent_name = "rank_catalog"
         elif self._looks_like_negative_feedback(message) and not re.search(
             r"\b(give|recommend|suggest|find|more|another|different|new batch)\b",
-            message,
-            re.IGNORECASE,
+            # "Don't recommend X" names a request verb only to refuse it.
+            without_negated_requests(message),
         ):
             intent_name = "update_preferences"
         elif self._should_use_catalog_recommender(message, history):
@@ -524,12 +550,32 @@ class AnimeAgent:
                 "trace": [],
                 "agent": self.status(),
             }
-        self._normalize_explicit_request(intent, message, relaxed_fields)
+        # Decided from the user's words, before the intent is normalized and
+        # long before any tool runs. Nothing the parser produced can widen it.
+        gate = PreferenceWriteGate(self._preference_write_authorization(message))
+        self._normalize_explicit_request(intent, message, relaxed_fields, gate.authorization)
+        self._enforce_write_eligibility(intent, message, gate)
+        response = self._dispatch_intent(intent, message, history, session_id, session, gate)
+        debug = response.setdefault("_debug", {})
+        if isinstance(debug, dict):
+            debug["write_safety"] = gate.describe()
+        return response
+
+    def _dispatch_intent(
+        self,
+        intent: StructuredIntent,
+        message: str,
+        history: list[dict[str, str]],
+        session_id: str | None,
+        session: dict[str, Any],
+        gate: PreferenceWriteGate | None = None,
+    ) -> dict[str, Any]:
+        gate = gate or PreferenceWriteGate(self._preference_write_authorization(message))
         if self._looks_like_series_lookup_request(message):
             intent.intent = "search"
             return self._respond_with_title_family(intent, message)
         if intent.intent == "recommend":
-            return self._respond_with_structured_recommendations(intent, message, history, session_id, session)
+            return self._respond_with_structured_recommendations(intent, message, history, session_id, session, gate)
         if intent.intent == "rank_catalog":
             return self._respond_with_catalog_ranking(intent, message)
         if intent.intent == "details":
@@ -537,21 +583,125 @@ class AnimeAgent:
         if intent.intent == "search":
             return self._respond_with_structured_search(intent, message)
         if intent.intent == "update_preferences":
-            patch = self._preference_patch_from_intent(intent)
-            result = self._tool_update_session({"session_id": session_id, **patch})
+            patch = gate.admit(self._preference_patch_from_intent(intent))
+            if not patch:
+                # Unreachable through `_respond_from_intent`, which reroutes an
+                # unauthorized update first. Kept so that no caller can turn
+                # this branch into an unconditional write.
+                return self._preference_clarification_response()
+            result = self._tool_update_session({"session_id": session_id, **patch}, gate)
             return {
                 "mode": "session_update",
                 "answer": "I updated this session's preferences and will use them in later recommendations.",
                 "trace": [{"tool": "update_session_preferences", "arguments": patch, "result": result}],
                 "agent": self.status(),
             }
+        if gate.rerouted_from == "update_preferences":
+            return self._preference_clarification_response()
         return self._conversational_response(message, history)
+
+    def _preference_write_authorization(self, message: str) -> PreferenceWriteAuthorization:
+        """Which stored preferences this message, read literally, may change.
+
+        Phrase evidence comes from `write_policy`. Added to it is the evidence
+        only the catalog can supply: a negation attached to a known title or
+        genre ("not Monster", "without romance"), and a request for a batch
+        that does not repeat the last one.
+        """
+        signals = set(preference_signals(message))
+        excluded_genres = self._matched_genre_constraints(message)[1]
+        if (
+            self._looks_like_information_request(message)
+            and not excluded_genres
+            and not self._negated_titles(message, TITLE_REJECTION_CUE)
+        ):
+            # "Tell me about X, I hate spoilers" and "introduce X but avoid
+            # spoilers" are negative about how to answer, not about X. In a
+            # request to be told something, a negative phrase counts only when
+            # it is attached to a title or genre.
+            signals -= {DISLIKED, EXCLUDED}
+        if (
+            excluded_genres
+            or self._explicitly_excluded_titles(message)
+            or self._looks_like_new_batch_request(message)
+            or self._looks_like_same_series_feedback(message)
+        ):
+            signals.add(EXCLUDED)
+        return PreferenceWriteAuthorization(frozenset(signals))
+
+    def _enforce_write_eligibility(
+        self,
+        intent: StructuredIntent,
+        message: str,
+        gate: PreferenceWriteGate,
+    ) -> None:
+        """Stop a preference update the user did not state, before it is dispatched.
+
+        `update_preferences` is the one intent whose whole effect is a
+        persistent write, so a classification -- the model's, or this module's
+        own rules -- is not enough to run it. The message must authorize at
+        least one field of the proposed patch. Otherwise the request is answered
+        read-only: as the information or recommendation request it literally
+        is, or with a clarifying question when it is neither.
+        """
+        if intent.intent != "update_preferences":
+            return
+        authorized, denied = gate.authorization.split(self._preference_patch_from_intent(intent))
+        if authorized:
+            return
+        gate.rerouted_from = "update_preferences"
+        gate.denied.extend(name for name in denied if name not in gate.denied)
+        mentioned = self._mentioned_catalog_titles(message)
+        if self._looks_like_information_request(message):
+            intent.intent = "details"
+            if not intent.reference_titles and not any(m.entity_type == "anime" for m in intent.entity_mentions):
+                # In "I didn't like X. What is Y about?" the refused patch names
+                # X, so the question is about the other title. When it names
+                # the only title there is, that title is the subject.
+                rejected = {
+                    self._canonical_title_key(str(value))
+                    for name in ("disliked_titles", "excluded_titles")
+                    for value in denied.get(name, [])
+                }
+                subjects = [title for title in mentioned if title.casefold() not in rejected]
+                intent.reference_titles = (subjects or mentioned)[:1]
+        elif CATALOG_LOOKUP.search(message):
+            intent.intent = "search"
+            if not intent.entity_mentions:
+                intent.entity_mentions = [EntityMention(title, "anime", "reference") for title in mentioned[:1]]
+        elif CATALOG_REQUEST.search(without_negated_requests(message)):
+            intent.intent = "recommend"
+            intent.free_text_preferences = intent.free_text_preferences or message
+            if not intent.reference_titles:
+                excluded = {value.casefold() for value in intent.excluded_titles}
+                intent.reference_titles = [title for title in mentioned if title.casefold() not in excluded]
+        else:
+            intent.intent = "conversational"
+
+    def _preference_clarification_response(self) -> dict[str, Any]:
+        return {
+            "mode": "preference_clarification",
+            "answer": (
+                "I have not changed your saved preferences, because I could not tell what you want me to "
+                'remember. Tell me directly -- for example "I liked that one", "I have already watched it", '
+                'or "Don\'t recommend it" with the title or genre -- or ask me to introduce a title or '
+                "recommend something similar."
+            ),
+            "trace": [],
+            "agent": self.status(),
+        }
+
+    def _looks_like_information_request(self, message: str) -> bool:
+        return self._looks_like_introduction_request(message) or bool(
+            INFORMATION_REQUEST_QUALIFIERS.search(message.casefold())
+        )
 
     def _normalize_explicit_request(
         self,
         intent: StructuredIntent,
         message: str,
         relaxed_fields: frozenset[str] = frozenset(),
+        authorization: PreferenceWriteAuthorization | None = None,
     ) -> None:
         """Make literal user constraints authoritative over probabilistic parsing.
 
@@ -559,6 +709,8 @@ class AnimeAgent:
         already decided to drop them, so re-reading them from the message would
         undo the relaxation.
         """
+        if authorization is None:
+            authorization = self._preference_write_authorization(message)
         explicit_formats = self._matched_formats(message)
         include_genres, exclude_genres = self._matched_genre_constraints(message)
         requested_limit = self._requested_limit(message)
@@ -651,8 +803,17 @@ class AnimeAgent:
             intent.free_text_preferences = intent.free_text_preferences or message
         elif (
             self._looks_like_negative_feedback(message)
-            and not asks_for_catalog_items
+            # A negated request verb ("don't recommend X") is not a request.
+            and not CATALOG_REQUEST.search(without_negated_requests(message))
             and not self._looks_like_new_batch_request(message)
+            # "Introduce X without spoilers" and "tell me about X, I hate
+            # spoilers" ask to be told something. Whatever else such a message
+            # says, this rule does not turn it into a write; the parser's own
+            # reading stands and is checked by `_enforce_write_eligibility`.
+            and not self._looks_like_information_request(message)
+            # Overriding the parser is only worth it when there is something
+            # the message authorizes writing.
+            and authorization.split(self._preference_patch_from_intent(intent))[0]
         ):
             intent.intent = "update_preferences"
 
@@ -705,7 +866,9 @@ class AnimeAgent:
         history: list[dict[str, str]],
         session_id: str | None,
         session: dict[str, Any],
+        gate: PreferenceWriteGate | None = None,
     ) -> dict[str, Any]:
+        gate = gate or PreferenceWriteGate(self._preference_write_authorization(message))
         self._enforce_explicit_entity_constraints(intent, message)
         requested_limit = self._requested_limit(message)
         if requested_limit is not None:
@@ -748,7 +911,10 @@ class AnimeAgent:
                     "ignored_session_fields": ignored_session_fields,
                 },
             }
-        preference_patch = self._preference_patch_from_intent(intent)
+        # A recommendation request also carries whatever taste the user stated
+        # in passing ("I enjoyed X, recommend something like it"). Only that
+        # stated part is stored; "similar to X" alone does not make X a Like.
+        preference_patch = gate.admit(self._preference_patch_from_intent(intent))
         has_required_voice_actor = bool(intent.required_voice_actors)
         has_required_entity = bool(
             self._has_required_entity_constraint(intent) or resolution_debug["required_entity_constraints"]
@@ -786,7 +952,7 @@ class AnimeAgent:
         }
         result = self._tool_recommend(arguments)
         if preference_patch:
-            self._tool_update_session({"session_id": session_id, **preference_patch})
+            self._tool_update_session({"session_id": session_id, **preference_patch}, gate)
         recommendation_step = {"tool": "recommend_anime", "arguments": arguments, "result": compact_result(result)}
         trace = [*resolutions, recommendation_step] if has_required_entity else [recommendation_step, *resolutions]
         result_titles = [item["title"] for item in result["results"]]
@@ -795,7 +961,8 @@ class AnimeAgent:
                 "session_id": session_id,
                 "last_recommendation_intent": intent.to_dict(),
                 "last_recommendations": result_titles,
-            }
+            },
+            gate,
         )
         fallback = format_recommendation_answer(result["results"], limit=intent.top_k)
         if intent.excluded_titles:
@@ -1126,11 +1293,19 @@ class AnimeAgent:
         """Resolve ordinal references before dispatching any intent/tool."""
         previous_results = [str(value) for value in session.get("last_recommendations", []) if value]
         classified_references, classified_watched = self._classified_result_indices(message)
-        watched_indices = list(dict.fromkeys([*intent.watched_result_indices, *classified_watched]))
+        # The parser may label a position "watched" when the user only pointed
+        # at it ("tell me more about the second one"). Marking a title watched
+        # is a stored preference, so without the user saying so the position is
+        # kept as a plain reference.
+        stated_watched = WATCHED in preference_signals(message)
+        proposed_watched = intent.watched_result_indices if stated_watched else []
+        proposed_references = [] if stated_watched else intent.watched_result_indices
+        watched_indices = list(dict.fromkeys([*proposed_watched, *classified_watched]))
         reference_indices = list(
             dict.fromkeys(
                 [
                     *intent.reference_result_indices,
+                    *(index for index in proposed_references if index not in watched_indices),
                     *(index for index in classified_references if index not in watched_indices),
                 ]
             )
@@ -1156,7 +1331,7 @@ class AnimeAgent:
             intent.reference_titles.append(previous_results[index - 1])
         detail_request = bool(
             re.search(
-                r"\b(?:tell me about|introduce|overview|score|rating|studio|"
+                r"\b(?:tell me (?:more )?about|introduce|overview|synopsis|summary|premise|score|rating|studio|"
                 r"who voices|voice actors?|cast|episodes?|director|who made)\b",
                 message,
                 re.IGNORECASE,
@@ -1178,6 +1353,12 @@ class AnimeAgent:
             intent.intent = "details"
         elif watched_indices and not recommendation_request:
             intent.intent = "update_preferences"
+        if reference_indices and intent.intent == "details":
+            # "What is the third one about?" asks about that result. A rule-built
+            # intent also carries the titles the list was built from, and the
+            # first of those used to be described instead.
+            referenced = [previous_results[index - 1] for index in reference_indices]
+            intent.reference_titles = list(dict.fromkeys([*referenced, *intent.reference_titles]))
         return None
 
     @staticmethod
@@ -2052,8 +2233,7 @@ class AnimeAgent:
         )
 
     def _looks_like_negative_feedback(self, message: str) -> bool:
-        message_key = message.casefold()
-        return any(pattern in message_key for pattern in NEGATIVE_FEEDBACK_PATTERNS)
+        return states_negative_preference(message)
 
     def _looks_like_same_series_feedback(self, message: str) -> bool:
         message_key = message.casefold()
@@ -2090,10 +2270,11 @@ class AnimeAgent:
         source_message = self._recommendation_source_message(message, history)
         excluded_titles = self._collect_negative_feedback_titles(message, history)
         excluded_ids = set(self.recommender.resolve_titles(excluded_titles))
-        preference_patch = self._extract_preference_patch(message)
+        gate = PreferenceWriteGate(self._preference_write_authorization(message))
+        preference_patch = gate.admit(self._extract_preference_patch(message))
         preference_result = None
         if preference_patch:
-            preference_result = self._tool_update_session({"session_id": session_id, **preference_patch})
+            preference_result = self._tool_update_session({"session_id": session_id, **preference_patch}, gate)
         seed_titles = [
             title
             for title in self._mentioned_catalog_titles(source_message)
@@ -2527,7 +2708,7 @@ class AnimeAgent:
                     prefix = message_key[max(0, match.start() - 60) : match.start()]
                     prefix = re.split(r"[,.;]|\bbut\b", prefix)[-1]
                     if re.search(
-                        r"(?:without|anything except|except|avoid|exclude|no|not interested in|"
+                        r"(?<![a-z0-9])(?:without|anything except|except|avoid|exclude|no|not interested in|"
                         r"don't like|do not like|dislike|hate)(?:[\s,;/&]+[a-z-]+){0,5}[\s,;/&]*$",
                         prefix,
                     ):
@@ -2670,29 +2851,30 @@ class AnimeAgent:
         return str(value).strip().casefold()
 
     def _explicitly_excluded_titles(self, message: str) -> list[str]:
-        message_key = self._entity_name_key(message)
-        excluded: list[str] = []
+        """Catalog titles the message puts out of bounds: "not X", "without X", "don't recommend X".
+
+        The negation has to sit in the same clause as the title and before it.
+        The clause is cut from the message as written, because once punctuation
+        is normalized away "No horror, something like Monster" reads as one
+        clause and Monster is excluded by a negation that was about horror.
+        """
+        return self._negated_titles(message, TITLE_EXCLUSION_CUE)
+
+    def _negated_titles(self, message: str, cue: re.Pattern[str]) -> list[str]:
+        """Catalog titles named in the message with `cue` before them in the same clause."""
+        text = message.casefold()
+        negated: list[str] = []
         for title in self._mentioned_catalog_titles(message):
-            title_key = self._entity_name_key(title)
-            positions = [
-                match.start()
-                for match in re.finditer(
-                    rf"(?:^|\s){re.escape(title_key)}(?:$|\s)",
-                    message_key,
-                )
-            ]
-            for position in positions:
-                prefix = message_key[max(0, position - 90) : position]
-                prefix = re.split(r"[,.;]|\bbut\b", prefix)[-1]
-                if re.search(
-                    r"(?:not|no|without|except|anything but|exclude|excluding|avoid|"
-                    r"don't include|do not include|don't want|do not want)"
-                    r"(?:\s+[a-z0-9'-]+){0,6}\s*$",
-                    prefix,
-                ):
-                    excluded.append(title)
+            tokens = self._entity_name_key(title).split()
+            if not tokens:
+                continue
+            occurrence = r"(?<![^\W_])" + r"[\W_]+".join(re.escape(token) for token in tokens) + r"(?![^\W_])"
+            for match in re.finditer(occurrence, text):
+                clause = re.split(r"[,.;!?]|\bbut\b", text[max(0, match.start() - 90) : match.start()])[-1]
+                if cue.search(self._entity_name_key(clause)):
+                    negated.append(title)
                     break
-        return list(dict.fromkeys(excluded))
+        return list(dict.fromkeys(negated))
 
     def _canonical_catalog_title(self, candidate: str) -> str | None:
         if not candidate:
@@ -2722,9 +2904,10 @@ class AnimeAgent:
         seed_titles = [
             title for title in self._mentioned_catalog_titles(source_message) if title not in excluded_titles
         ]
-        preference_patch = self._extract_preference_patch(message)
+        gate = PreferenceWriteGate(self._preference_write_authorization(message))
+        preference_patch = gate.admit(self._extract_preference_patch(message))
         if preference_patch:
-            self._tool_update_session({"session_id": session_id, **preference_patch})
+            self._tool_update_session({"session_id": session_id, **preference_patch}, gate)
         matched_genres = self._matched_genres(source_message)
         requested_limit = self._requested_limit(message) or self._requested_limit(source_message) or 5
         min_score = self._requested_min_score(message)
@@ -2909,7 +3092,17 @@ class AnimeAgent:
         anime_id = int(arguments["anime_id"])
         return {"result": self.recommender.details(anime_id)}
 
-    def _tool_update_session(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _tool_update_session(
+        self,
+        arguments: dict[str, Any],
+        gate: PreferenceWriteGate | None = None,
+    ) -> dict[str, Any]:
+        """The only place this agent writes to a session.
+
+        Every preference field is checked against the request's write gate
+        here, immediately before the write, whatever the caller already did.
+        Without a gate nothing but conversation context is written.
+        """
         session_id = arguments.get("session_id")
         patch = {
             key: arguments.get(key)
@@ -2932,6 +3125,9 @@ class AnimeAgent:
             )
             if key in arguments
         }
+        patch = (gate or PreferenceWriteGate()).admit(patch)
+        if not patch:
+            return {"profile": self.get_session_profile(str(session_id) if session_id else None)}
         return {"profile": self.update_session_preferences(str(session_id) if session_id else None, patch)}
 
 

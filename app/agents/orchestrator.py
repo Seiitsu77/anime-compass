@@ -143,6 +143,9 @@ class AgentOrchestrator:
         if agent_intent is None:
             agent_intent = AgentIntent.from_legacy(intent)
         parse_ms = (time.perf_counter() - parse_started) * 1000
+        # What the parser asked for, before the backend normalizes it and
+        # decides what may run. Kept so a rerouted request stays explainable.
+        proposed_intent = agent_intent.intent
 
         response, agent_intent, validated_calls = await self._execute_catalog_tools(
             agent_intent,
@@ -158,6 +161,7 @@ class AgentOrchestrator:
         replan_state = response.pop("_replan_state", None) or ReplanState()
         if provider_attempts and provider_attempts[-1].get("phase") == "tool_routing_fallback":
             parser_mode = "rule_fallback"
+        self._report_write_eligibility(response, proposed_intent, agent_intent, parser_mode, provider_attempts)
         generation_ms = 0.0
         if (
             selected_provider is not None
@@ -285,6 +289,7 @@ class AgentOrchestrator:
                     }
                     for name, state in self.circuits.items()
                 },
+                "proposed_intent": proposed_intent,
                 "validated_intent": agent_intent.model_dump(mode="json"),
                 "replan_state": replan_state.model_dump(mode="json"),
                 "tool_plan": self.tool_registry.plan(agent_intent).model_dump(mode="json"),
@@ -439,6 +444,52 @@ class AgentOrchestrator:
             }
         )
         return fallback_response, validated_fallback, fallback_calls
+
+    def _report_write_eligibility(
+        self,
+        response: dict[str, Any],
+        proposed_intent: str,
+        executed_intent: AgentIntent,
+        parser_mode: str,
+        provider_attempts: list[dict[str, Any]],
+    ) -> None:
+        """Make a refused preference write visible outside a debug response.
+
+        The refusal itself happens in the agent, before any tool runs. This
+        only records it: a parser that keeps proposing writes the user never
+        stated is a regression worth seeing in production logs, where there is
+        no debug payload to read.
+        """
+        debug = response.get("_debug")
+        write_safety = debug.get("write_safety") if isinstance(debug, dict) else None
+        if not isinstance(write_safety, dict):
+            return
+        denied_fields = list(write_safety.get("denied_fields") or [])
+        rerouted_from = write_safety.get("rerouted_from")
+        if not denied_fields and not rerouted_from:
+            return
+        logger.warning(
+            "agent_preference_write_denied",
+            extra={
+                "context": {
+                    "parser_mode": parser_mode,
+                    "proposed_intent": proposed_intent,
+                    "executed_intent": executed_intent.intent,
+                    "rerouted_from": rerouted_from,
+                    "denied_fields": denied_fields,
+                    "signals": list(write_safety.get("signals") or []),
+                }
+            },
+        )
+        provider_attempts.append(
+            {
+                "phase": "write_eligibility",
+                "provider": "backend",
+                "outcome": "denied",
+                "rerouted_to": executed_intent.intent if rerouted_from else None,
+                "denied_fields": denied_fields,
+            }
+        )
 
     def _validated_generated_answer(self, content: str, response: dict[str, Any]) -> bool:
         recommendation_step = next(
