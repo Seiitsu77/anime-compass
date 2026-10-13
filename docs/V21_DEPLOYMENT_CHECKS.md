@@ -1,21 +1,73 @@
 # Anime Compass V2.1 deployment checks
 
-Verified on 2026-10-12. Status: ready for deployment; no blocking failures found.
-No Cloud Run revision or production traffic was changed.
+Verified on 2026-10-12. Status: the corrected candidate below passed every check
+and is deployed with 0% of traffic. Production traffic has not been changed and
+remains 100% on `anime-compass-00003-kfx`.
 
 ## Candidate
 
-- Runtime source commit: `b7ee94e`, on local branch `codex/v21-production`.
+- Runtime source commit: `94d6c10`, on local branch `codex/v21-production`.
 - Clean release checkout: `.tools/v21-production-check`.
-- Cloud Build: [successful candidate build](https://console.cloud.google.com/cloud-build/builds/f0debdbb-d715-42f0-8773-3518b73c04b8?project=937277373885).
-- Image tag: `us-central1-docker.pkg.dev/project-4ea00490-f490-4348-86b/anime-compass/anime-compass:v21-check-b7ee94e`.
-- Tested immutable digest: `sha256:10b02aac3af16c4d799414932833f5c7e7a477bd79d08cda61b283ba2cb5c917`.
+- Cloud Build: [successful candidate build](https://console.cloud.google.com/cloud-build/builds/51af7fa0-f314-4a95-b28b-49fb4464f22f?project=937277373885).
+- Image tag: `us-central1-docker.pkg.dev/project-4ea00490-f490-4348-86b/anime-compass/anime-compass:v21-check-94d6c10`.
+- Tested immutable digest: `sha256:daab1cb7a5d758a26263576f97a054efddee262a9dde8ffbde85be9ae7995266`.
+- Cloud Run revision: `anime-compass-v21-94d6c10`, tag `v21-94d6c10`, 0% traffic,
+  reachable at `https://v21-94d6c10---anime-compass-b2c6mriqrq-uc.a.run.app`.
 
 Deploy the tested digest when approving the release. The main working folder
 contains unrelated changes; do not use `-AllowDirty` to include them accidentally.
 The isolated release checkout excludes those changes.
 
-## Verification
+Do not deploy the first candidate, `b7ee94e` /
+`sha256:10b02aac3af16c4d799414932833f5c7e7a477bd79d08cda61b283ba2cb5c917`
+(revision `anime-compass-v21-b7ee94e`). It carries the agent failures described
+next, as does the revision serving production today.
+
+## Agent correction
+
+The first candidate's controlled rollout found that "Introduce Cowboy Bebop
+without spoilers." was answered with "I updated this session's preferences".
+Gemini had classified the request correctly; the backend's own normalization
+read the substring "without" as negative feedback and rerouted it to a session
+write, and the only tool-contract check ran after that write. With Gemini the
+write carried an empty patch. With Gemini unavailable the same message stored
+Cowboy Bebop in `excluded_titles`.
+
+Commit `6c1cba8` fixes the routing and adds a backend write gate: a session
+preference is written only when the user's own message states that kind of
+preference, decided before any tool runs. Live testing against Gemini found and
+fixed three further defects in the same path: HTTP 500 for "Tell me more about
+the second one" with no previous list; every "anime similar to X" intent being
+rejected because Gemini words the relation as `similar_to`; and a positional
+follow-up describing the wrong title on the rule path. Commit `94d6c10` caches
+the catalog title scan so the gate adds no latency.
+
+| Check | Result |
+|---|---|
+| Complete backend suite on isolated release | 713 passed, 13 skipped (154 new) |
+| Type checking, lint and formatting | Passed |
+| Frontend tests and Vite production build | Passed; 77 frontend tests |
+| Linux image build and credential-free container checks in Cloud Build | Passed |
+| `scripts/check_production_deployment.py` against the candidate URL | Passed |
+| Live Gemini requests against the candidate URL, fresh sessions | 64 of 64 turns correct |
+
+The live run repeated each information request three to five times and checked
+intent, tool trace, answer and the stored session before and after every turn.
+No information, search or recommendation request changed a stored preference;
+"I like", "I've already watched" and "Don't recommend" each stored exactly the
+field they state. Gemini returned HTTP 503 on 19 of the 64 turns; those were
+served by the deterministic fallback and behaved identically.
+
+Known and unchanged: a correct Gemini answer that does not repeat the title
+verbatim is rejected by the grounding check and the catalog answer is served
+instead (seen on every "who are the main characters" request), and a chat
+recommendation takes about 40 seconds on one vCPU.
+
+## Verification of the build preparation
+
+These results are from the first candidate, `b7ee94e`. The frontend source and
+build configuration have not changed since. The Chromium run was not repeated
+for the corrected candidate; the other rows were, with the results above.
 
 | Check | Result |
 |---|---|
