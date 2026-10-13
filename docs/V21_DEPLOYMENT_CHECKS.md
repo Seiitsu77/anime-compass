@@ -23,6 +23,22 @@ Deploy the tested digest when approving the release. The main working folder
 contains unrelated changes; do not use `-AllowDirty` to include them accidentally.
 The isolated release checkout excludes those changes.
 
+### From the serving image back to its source
+
+The chain was checked link by link on 2026-10-12, not inferred from the tag:
+
+1. Cloud Run serves `anime-compass-v21-94d6c10`, whose image is the digest above.
+2. That digest is the recorded output of Cloud Build `51af7fa0-f314-4a95-b28b-49fb4464f22f`.
+3. The build's source archive, as recorded in its provenance, has SHA-256
+   `5e0602bd402bf9ba945d6731cde653a37008f627cb45263b466a9c0709baa222`.
+   The archive was downloaded and hashes to exactly that.
+4. All 149 files in the archive are identical to commit `94d6c10`, and it holds
+   nothing else. Tracked files it leaves out are the ones `.gcloudignore`
+   excludes: tests, docs, experiments and evaluation data.
+
+Commit `94d6c10` is tagged `v2.1.0`. Later commits on `main` change documentation
+and repository layout and are not what the serving image was built from.
+
 Do not deploy the first candidate, `b7ee94e` /
 `sha256:10b02aac3af16c4d799414932833f5c7e7a477bd79d08cda61b283ba2cb5c917`
 (revision `anime-compass-v21-b7ee94e`). It carries the agent failures described
