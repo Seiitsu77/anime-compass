@@ -22,6 +22,8 @@ experiment record see the reports under
 user message
   -> Gemini returns structured AgentIntent
   -> Pydantic validates and normalizes every field
+  -> backend re-reads literal constraints from the message and normalizes the intent
+  -> backend decides, from the user's own words, whether any preference may be written
   -> backend derives an allowlisted tool plan
   -> backend resolves entities and executes catalog joins/filters
   -> tool trace is validated against its typed contract
@@ -30,6 +32,20 @@ user message
 ```
 
 Available tools are `search_anime`, `search_entities`, `resolve_entity`, `rank_catalog`, `recommend_anime`, `get_anime_details`, and `update_session_preferences`.
+
+The model never calls a tool. It returns one structured intent; the backend chooses and runs the tools, and the
+model is used a second time only to phrase the verified result. That is the whole extent of its autonomy.
+
+### Write safety
+
+`update_session_preferences` is the only tool that changes stored state, and a classification is not enough to
+run it. `backend/anime_agent/write_policy.py` decides from the raw message which preference fields the user
+actually stated — a Like, something watched, a dislike, an exclusion — before the intent is normalized and before
+any tool runs. A proposed update with nothing authorized is answered read-only instead: as the introduction,
+search, or recommendation the message literally asks for, or with a clarifying reply. This exists because
+"Introduce Cowboy Bebop without spoilers" was once routed to a session write by the backend's own normalization;
+`tests/test_intent_write_safety.py` pins the behaviour down, mostly by feeding the orchestrator deliberately wrong
+intents.
 
 ### Bounded replanning
 
@@ -284,34 +300,42 @@ python scripts/evaluate_recommender.py
 ## Actual Stack
 
 - Python 3.10+, FastAPI, Uvicorn, Pydantic v2
-- NumPy, Sentence Transformers, PyTorch CPU
+- React 19 and Vite 6 for the web UI (`frontend/`), compiled to static files that FastAPI serves
+- NumPy for ALS serving, LightGBM for the LambdaMART reranker
+- Sentence Transformers and PyTorch CPU for the optional semantic channel
 - SciPy for offline evaluation only; the web application never imports it
 - SQLAlchemy 2.x and SQLite
 - Gemini REST API and deterministic catalog fallback
-- Plain HTML, CSS, and JavaScript
-- Pytest, Ruff, MyPy, GitHub Actions
-- Docker and Docker Compose
+- Pytest, Ruff, MyPy, Node's built-in test runner, GitHub Actions
+- One Docker image on Google Cloud Run, built by Cloud Build
+- Streamlit for the separate technical demo
 
-No React, Redis, Kafka, Kubernetes, authentication layer, GPU training, or open-web search is used.
+No Redis, Kafka, Kubernetes, authentication layer, GPU training, or open-web search is used.
 
 ## Local Run
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements-api.txt
+python -m pip install -r requirements-dev.txt
 python -m pip install -e . --no-deps
+python scripts/download_artifacts.py --repo-id Seiitsu/anime-compass-data
 Copy-Item .env.example .env
+cd frontend; npm ci; npm run build; cd ..
 python run_app.py
 ```
 
-Open `http://127.0.0.1:8000`. Set `LLM_PROVIDER=gemini` plus a backend-only `GEMINI_API_KEY` for text generation. Search and recommendation endpoints remain available when Gemini is unavailable.
+Open `http://127.0.0.1:8000`. Set `LLM_PROVIDER=gemini` plus a backend-only `GEMINI_API_KEY` for text generation. Search and recommendation endpoints remain available when Gemini is unavailable. Without the `npm run build` step the API still serves and `/` answers 404; for UI work, run `npm run dev` in `frontend/` instead and let Vite proxy `/api`.
+
+`requirements-dev.txt` installs the API, LightGBM for the reranker, and the test tools, without PyTorch. The
+production image installs `requirements-web.txt`, which adds Sentence Transformers for the optional semantic
+channel; locally that channel stays off while `EMBEDDING_PROVIDER=none`, as it is in `.env.example`.
 
 ### Runtime artifacts
 
-The compact serving catalog and production ALS artifact used by Streamlit are committed under `data/processed`
-and checksum-verified at startup. The much larger full catalog and optional research artifacts remain excluded
-from Git; download them from a Hugging Face Dataset repository when running the complete FastAPI application:
+No model or catalog artifact is committed: `data/processed/` holds only a `.gitkeep`, and
+`data/artifacts.manifest.json` pins the SHA-256 of every file that belongs there. Download them from the
+Hugging Face Dataset repository; each is verified against the manifest before use:
 
 ```powershell
 python scripts/download_artifacts.py --repo-id Seiitsu/anime-compass-data
@@ -333,7 +357,8 @@ Interactive docs are available at `/docs`.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/chat` | Parse intent, execute catalog tools, and return a grounded answer |
-| `POST` | `/api/recommend` | Run a typed hybrid recommendation request |
+| `POST` | `/api/recommend` | Run a typed recommendation request (ALS fast path, or the hybrid when constrained) |
+| `POST` | `/api/recommend/page` | Page through one ranked sequence with a stateless cursor |
 | `POST` | `/api/search` | Paginated lexical/semantic search with filters and sorting |
 | `POST` | `/api/rank` | Deterministically filter and sort by an explicit catalog field |
 | `POST` | `/api/entities/search` | Resolve catalog entities |
@@ -341,34 +366,35 @@ Interactive docs are available at `/docs`.
 | `GET/POST/DELETE` | `/api/session/{session_id}` | Manage anonymous session preferences |
 | `GET` | `/api/model-info` | Inspect active channels, weights, and artifacts |
 | `GET` | `/api/health` | Inspect API, catalog, database, provider, and embedding health |
+| `GET` | `/api/ready` | 200 once models are loaded, 503 while warming; the Cloud Run startup probe |
 
 ## Tests And CI
 
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m pip install -e . --no-deps
-python -m compileall -q app backend scripts tests run_app.py
-python -m ruff check app backend scripts tests run_app.py
-python -m ruff format --check app backend scripts tests run_app.py
+python -m ruff check app backend scripts tests run_app.py streamlit_app.py
+python -m ruff format --check app backend scripts tests run_app.py streamlit_app.py
 python -m mypy app backend scripts
 python -m pytest -q
-node --check frontend/app.js
+
+cd frontend
+npm ci
+npm test
+npm run build
 ```
 
-Tests mock Gemini, so CI requires no provider key and makes no paid API calls.
+Tests mock Gemini, so CI requires no provider key and makes no paid API calls. The tests in
+`tests/test_production_frontend.py` that serve the compiled bundle skip when `frontend/dist` has not been built;
+CI builds it first and sets `REQUIRE_FRONTEND_BUNDLE=1`, which turns that skip into a failure.
 
-## Docker And Hugging Face Spaces
+## Container
 
-```powershell
-docker build -t anime-compass .
-docker run --rm -p 8000:7860 -e HF_DATASET_REPO=Seiitsu/anime-compass-data anime-compass
-```
+There is one image, `Dockerfile.cloudrun`, and one deployment target, Google Cloud Run. Build, configuration,
+verification and rollback are in [CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md). The earlier Hugging Face
+Docker Space image and the Vercel and Ollama paths have been removed.
 
-Or use `docker compose up --build`. The named volume stores only runtime SQLite data.
-
-For a Hugging Face Docker Space, set `HF_DATASET_REPO=Seiitsu/anime-compass-data` as a Space variable. Missing artifacts are downloaded at startup and verified against `data/artifacts.manifest.json`. Add `LLM_PROVIDER=gemini` as a variable and `GEMINI_API_KEY` as a secret. Catalog tools remain available without Gemini.
-
-The complete account and repository checklist is in [PUBLISHING.md](PUBLISHING.md).
+Publishing the Streamlit demo and the artifact Dataset repository is covered in [PUBLISHING.md](PUBLISHING.md).
 
 ## Data And Security
 
@@ -399,9 +425,9 @@ Provider credentials are loaded only from ignored backend environment files. Req
 - Built a leakage-safe full-catalog recommendation benchmark with paired bootstrap intervals, threshold
   sensitivity, coverage, novelty, popularity-bias, diversity, and latency diagnostics; used it to replace the
   previous default with ALS at +42.6% NDCG@10 and roughly 465× lower p50 latency on the same 800 users.
-- Built a local-first anime recommendation Agent with FastAPI, Pydantic-constrained LLM intent parsing, typed tool routing, catalog-grounded response validation, and bounded deterministic replanning that relaxes over-constrained filters without ever relaxing verified entity constraints, using Gemini with a deterministic catalog fallback.
+- Built a catalog-grounded anime recommendation Agent with FastAPI, Pydantic-constrained LLM intent parsing, typed tool routing, catalog-grounded response validation, and bounded deterministic replanning that relaxes over-constrained filters without ever relaxing verified entity constraints, using Gemini with a deterministic catalog fallback.
 - Implemented an explainable hybrid recommender over 18,064 titles and 56.7M anonymous ratings using scalable user-centred collaborative projections, metadata/synopsis TF-IDF, LSA, creator signals, hard entity joins, diversity reranking, and session feedback.
-- Built a reproducible data-quality and ablation pipeline plus 395 automated API, Agent, ranking,
+- Built a reproducible data-quality and ablation pipeline plus more than 700 automated API, Agent, ranking,
   artifact-integrity, security, and transcript regression tests, with graceful deterministic fallback when LLM
   providers are unavailable.
 - Found and fixed a silent model defect: a documented 0.14-weight embedding channel had never been built,

@@ -8,12 +8,19 @@ LightGBM.
 
 ## What gets deployed
 
-V2.1 builds the React UI in a Node 22 stage with `npm ci` and `npm run build`.
-FastAPI serves `frontend-react/dist` in production through the image's
-`FRONTEND_DIR`. The default source-only local entry point can still serve the
-legacy `frontend/` directory. Both frontends use the same API.
-Hash navigation and the unchanged service URLs preserve
+One container serves everything. The image builds the React UI in a Node 22
+stage with `npm ci` and `npm run build`, copies the result to `frontend/dist`,
+and FastAPI serves that directory at `/` next to the JSON API under `/api`.
+`FRONTEND_DIR` names the directory, and the container launcher refuses to start
+if `frontend/dist/index.html` is missing, so an image cannot come up without a
+UI. Hash navigation and the unchanged service URL preserve
 `localStorage.animeCompassSession` on the existing browser origin.
+
+The revision serving production today, `anime-compass-v21-94d6c10`, was built
+from tag `v2.1.0`, when the React source lived in `frontend-react/` beside a
+legacy vanilla frontend. The layout described here is what the next image
+built from `main` will use; see
+[V21_DEPLOYMENT_CHECKS.md](V21_DEPLOYMENT_CHECKS.md) for the deployed one.
 
 Cloud Build checks the candidate container before pushing it: model readiness,
 React assets, API routing, cursor pagination, exclusions, and legacy API aliases.

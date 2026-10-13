@@ -118,6 +118,10 @@ request was made.
 
 ## Production integration
 
+This section describes the deployed image, built from `v2.1.0`. On `main` the
+React source has since moved from `frontend-react/` to `frontend/` and the
+legacy vanilla frontend has been removed; the mechanism is unchanged.
+
 The Cloud Run image now builds React in a Node 22 stage and copies its output
 to `frontend-react/dist`. FastAPI selects that directory through `FRONTEND_DIR`.
 API routes are registered before the static mount. HTML is revalidated and
