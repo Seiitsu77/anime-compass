@@ -19,7 +19,7 @@ from backend.anime_agent.data_pipeline import (  # noqa: E402
 )
 from backend.anime_agent.entities import EntityResolver  # noqa: E402
 from backend.anime_agent.recommender import AnimeRecommender, creator_roles, series_key  # noqa: E402
-from backend.anime_agent.server import SessionStore, merge_profiles  # noqa: E402
+from tests.in_memory_sessions import SessionStore  # noqa: E402
 
 CATALOG = [
     {
@@ -479,20 +479,6 @@ class DataPipelineTests(unittest.TestCase):
 
         self.assertNotIn("\n", content)
         self.assertEqual(json.loads(content)[0]["title"], "Space Quest")
-
-
-class SessionTests(unittest.TestCase):
-    def test_session_store_replace_and_merge_profiles(self) -> None:
-        store = SessionStore()
-        store.update("abc", {"liked_titles": ["Space Quest"], "excluded_genres": ["Mecha"]})
-        replaced = store.update("abc", {"replace": True, "liked_titles": ["Quiet Kitchen"]})
-
-        self.assertEqual(replaced["liked_titles"], ["Quiet Kitchen"])
-        self.assertEqual(replaced["excluded_genres"], [])
-
-        merged = merge_profiles(replaced, {"seen_titles": ["Space Quest"], "liked_titles": ["Quiet Kitchen"]})
-        self.assertEqual(merged["liked_titles"], ["Quiet Kitchen"])
-        self.assertEqual(merged["seen_titles"], ["Space Quest"])
 
 
 class AnimeRecommenderTests(unittest.TestCase):

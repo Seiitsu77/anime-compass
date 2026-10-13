@@ -74,4 +74,3 @@ ignore_missing_imports = true
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
-exclude = ["backend/anime_agent/server.py"]
