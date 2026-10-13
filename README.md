@@ -181,7 +181,8 @@ python run_app.py                      # http://127.0.0.1:8000
 
 For UI work, run `npm run dev` in `frontend/` instead of building; Vite serves on port 5173 and proxies `/api`
 (see [frontend/README.md](frontend/README.md)). Without a Gemini key everything except natural-language
-phrasing still works.
+phrasing still works; `/api/health` then reports `degraded`, because the provider has no key and the optional
+semantic channel is off by default.
 
 ```bash
 python -m pytest -q                    # backend
