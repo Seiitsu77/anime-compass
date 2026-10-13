@@ -301,7 +301,7 @@ def test_a_browser_profile_sync_keeps_the_agent_conversation_context(tmp_path: P
             "/api/session/chat/preferences",
             json={"last_recommendations": ["Death Parade", "Ghost Hunt"], "last_recommendation_intent": {"top_k": 2}},
         )
-        # Exactly what frontend-react/src/lib/api.js sends: a full replace with no context fields.
+        # Exactly what frontend/src/lib/api.js sends: a full replace with no context fields.
         synced = client.post(
             "/api/session/preferences",
             json={

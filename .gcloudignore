@@ -64,9 +64,9 @@ Thumbs.db
 /tests/
 /docs/
 /experiments/
-/frontend-react/node_modules/
-/frontend-react/dist/
-/frontend-react/.env*
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.env*
 /.agents/
 /.aws/
 

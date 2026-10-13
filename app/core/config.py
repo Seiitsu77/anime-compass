@@ -20,7 +20,10 @@ class Settings(BaseSettings):
 
     app_host: str = "127.0.0.1"
     app_port: int = Field(default=8000, ge=1, le=65535)
-    frontend_dir: Path = PROJECT_ROOT / "frontend"
+    # The compiled React bundle. `npm run build` in frontend/ creates it; the
+    # production image builds it in its Node stage. Without it the API still
+    # serves and `/` answers 404 -- see `create_app`.
+    frontend_dir: Path = PROJECT_ROOT / "frontend" / "dist"
     cors_origins: Annotated[list[str], NoDecode] = ["http://127.0.0.1:8000", "http://localhost:8000"]
     database_url: str = "sqlite:///data/anime_compass.db"
     session_retention_days: int = Field(default=30, ge=1, le=365)

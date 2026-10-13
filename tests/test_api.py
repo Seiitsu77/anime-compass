@@ -273,8 +273,17 @@ def test_rate_limit_and_body_limit(tmp_path: Path, catalog: list[dict[str, Any]]
 
 def test_frontend_and_errors_do_not_expose_secret(tmp_path: Path, catalog: list[dict[str, Any]]) -> None:
     sentinel = "TEST-PRIVATE-KEY-DO-NOT-LEAK"
-    frontend = "\n".join(path.read_text(encoding="utf-8") for path in Path("frontend").glob("*.*"))
+    # Everything a browser can be sent: the React source, and the compiled
+    # bundle when one has been built. node_modules is deliberately not walked.
+    browser_roots = [root for root in (Path("frontend/src"), Path("frontend/dist")) if root.is_dir()]
+    browser_files = [
+        Path("frontend/index.html"),
+        *(p for root in browser_roots for p in root.rglob("*") if p.is_file()),
+    ]
+    frontend = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in browser_files)
+    assert Path("frontend/src/main.jsx").is_file()
     assert sentinel not in frontend
+    assert "GEMINI_API_KEY" not in frontend
     assert ".env" in Path(".gitignore").read_text(encoding="utf-8")
     with app_client(tmp_path, catalog) as client:
         response = client.post("/api/recommend", json={"top_k": 999, "query": sentinel})

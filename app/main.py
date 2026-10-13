@@ -324,7 +324,20 @@ def create_app(
 
     app.include_router(router)
     frontend_root = settings.frontend_dir
-    app.mount("/", FrontendStaticFiles(directory=frontend_root, html=True), name="frontend")
+    if (frontend_root / "index.html").is_file():
+        app.mount("/", FrontendStaticFiles(directory=frontend_root, html=True), name="frontend")
+    else:
+        # A source checkout has no bundle until `npm run build` has run, and
+        # mounting a missing directory would stop the API from starting at all.
+        # Serving the API alone is the useful behaviour for backend work and
+        # tests. Production cannot reach this branch: the container launcher
+        # refuses to start without the bundle.
+        logger.warning(
+            "frontend_bundle_missing",
+            extra={
+                "context": {"frontend_dir": str(frontend_root), "fix": "run `npm ci && npm run build` in frontend/"}
+            },
+        )
     return app
 
 

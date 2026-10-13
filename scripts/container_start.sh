@@ -33,7 +33,7 @@ export PYTHONPATH
 missing=""
 for required in \
     app/main.py \
-    frontend/index.html \
+    frontend/dist/index.html \
     data/artifacts.manifest.json \
     data/processed/anime_catalog.json \
     data/processed/collaborative_embeddings.npz

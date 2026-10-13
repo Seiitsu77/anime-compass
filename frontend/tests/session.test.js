@@ -132,7 +132,8 @@ test('what this app saves is still readable by the legacy vanilla frontend',()=>
   );
   let saved;
   withStorage({setItem:(_key,val)=>saved=JSON.parse(val)},()=>persistSession(session));
-  // Exactly what frontend/app.js loadSessionState() does.
+  // Exactly what loadSessionState() in the legacy frontend's app.js did. That
+  // frontend is gone from the repository but still served by older revisions.
   const legacyState={
     sessionId:saved.sessionId,
     liked:Array.isArray(saved.liked)?saved.liked:[],

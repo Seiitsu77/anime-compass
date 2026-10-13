@@ -1,29 +1,39 @@
-# Anime Compass V2.1 — React + Vite
+# Anime Compass web frontend (React + Vite)
 
-A separate, **not deployed** white-and-lavender frontend prototype, built after reviewing the existing `Seiitsu77/anime-compass` GitHub source. The existing FastAPI API, Gemini Agent and ALS/LambdaMART ranking are reused. No model artifact is changed by this frontend; the V2.1 work did change request handling in the API, listed under [V2.1](#v21-feedback-semantics-and-correctness).
+The web UI of Anime Compass, and the only one: the earlier vanilla JavaScript
+frontend has been removed. It talks to the FastAPI service over same-origin
+`/api` calls and holds no secrets. In production FastAPI serves the compiled
+bundle from `frontend/dist`; there is no separate frontend host.
 
-## Run locally (PowerShell)
+No model artifact is changed by this frontend. The V2.1 work did change request
+handling in the API, listed under [V2.1](#v21-feedback-semantics-and-correctness).
+
+## Run locally
 
 Requirements: Node.js 20.19+ or 22.12+ and npm.
 
-```powershell
-cd "C:\Study\Toy project"
-# Extract the downloaded archive as frontend-react/ (or copy this folder there).
-cd frontend-react
-npm install
+```bash
+cd frontend
+npm ci
 npm run dev
 ```
 
-Then open `http://127.0.0.1:5173`. Vite forwards `/api` to the existing Cloud Run service. The first remote response may be slow after Cloud Run scales to zero. For a local FastAPI server, create `.env` using `.env.example` and change `API_PROXY_TARGET` to `http://127.0.0.1:8000`; restart Vite. Never place GEMINI_API_KEY or other server secrets in Vite environment variables.
+Then open `http://127.0.0.1:5173`. Vite forwards `/api` to the live Cloud Run
+service by default, so the UI works without a local backend; the first response
+may be slow after the service has scaled to zero. To use a local FastAPI server
+instead, copy `.env.example` to `.env.local`, set `API_PROXY_TARGET` to
+`http://127.0.0.1:8000`, and restart Vite. Never place `GEMINI_API_KEY` or any
+other server secret in a Vite environment variable: everything Vite reads can
+end up in the browser bundle.
 
-```powershell
-npm test
-npm run build
+```bash
+npm test         # 77 unit tests, Node's built-in runner, no browser needed
+npm run build    # writes dist/
 ```
 
-The result of `npm run build` is in `dist/`. The Cloud Run image builds this
-bundle from the lockfile and serves it through FastAPI. CI and the Cloud Build
-candidate check verify production integration before deployment.
+`python run_app.py` serves `dist/` at `/` once it has been built. The Cloud Run
+image builds the bundle from the lockfile in its own Node stage, and CI runs the
+FastAPI static-asset tests against a freshly built bundle.
 
 ## Pages
 
@@ -36,7 +46,10 @@ candidate check verify production integration before deployment.
 
 The original vanilla frontend stores an object in `localStorage.animeCompassSession` with fields `sessionId`, `liked`, and `preferences`. This app keeps those existing fields under **the same key** and adds three optional ones the legacy frontend ignores: `watchlist` (Want to Watch), `watched` (Already Watched) and `notInterested`. Legacy session data still loads, and unit tests cover compatibility in both directions.
 
-**Important**: `localhost:5173` and the live Cloud Run URL have different browser origins and thus different localStorage. Existing likes will automatically be available only when this build is eventually served from the *same existing Cloud Run host*. During local development you can export the JSON from the old browser's DevTools or from a previous React session, then import it using **For You → Import backup**. Before ever switching a production page, export your current Likes backup.
+The production site kept its URL when this frontend replaced the old one, so
+Likes saved there carried over. `localhost:5173` is a different browser origin
+with its own localStorage: to bring a profile into local development, export it
+with **For You → Export backup** on the live site and import it locally.Before ever switching a production page, export your current Likes backup.
 
 ## Data honesty / limitations
 
@@ -45,16 +58,8 @@ The original vanilla frontend stores an object in `localStorage.animeCompassSess
 - No Region or Pricing control because the existing search API does not support those hard filters.
 - The Agent is a separate page, not an always-open sidebar; conversation history is retained while navigating pages in the current tab, but not persisted across reloads.
 - The original backend session repository uses SQLite and may be ephemeral in Cloud Run, so the browser session object remains the persistent source for Likes.
-- This is an integration-ready frontend prototype. V2.1 was exercised end to end in a browser against a local backend running the real catalog, ALS artifact and LambdaMART reranker (`scripts/dev_e2e_backend.py`).
-
-## Production adoption checklist
-
-1. Copy the project into `frontend-react/` in the existing monorepo on a **new branch**.
-2. Run `npm install`, `npm test`, `npm run build`, and test all flows in a real browser against the **same backend revision** used in production.
-3. Test search, like/unlike, persisted Likes, recommendations, missing/failed API, Agent follow-up, filtering, mobile layout and keyboard controls.
-4. Back up the old `frontend/` assets; run Vite build in Cloud Build/Docker or CI, then copy `frontend-react/dist/*` to the FastAPI-served `frontend/` directory. Preserve `/api` routing and SPA hash-based navigation.
-5. Confirm the Cloud Run URL remains unchanged, so production `localStorage.animeCompassSession` survives.
-6. After acceptance, deploy a **new revision** and retain rollback options.
+- There is no account and no multi-device sync. The profile lives in the browser.
+- V2.1 was exercised end to end in a browser against a local backend running the real catalog, ALS artifact and LambdaMART reranker (`scripts/dev_e2e_backend.py`).
 
 ## Files
 
@@ -191,7 +196,7 @@ reranking. It is off by default and must stay off in production.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\dev_e2e_backend.py   # real models, debug on, no external calls
-# frontend-react\.env.local:  API_PROXY_TARGET=http://127.0.0.1:8011
+# frontend\.env.local:  API_PROXY_TARGET=http://127.0.0.1:8011
 npm run dev
 ```
 
@@ -205,9 +210,8 @@ npm run dev
 - **Motion:** a staggered blur-in headline and a sliding navigation pill,
   written in-project and respecting `prefers-reduced-motion`.
 
-If you roll back to the **old vanilla frontend** and change Likes there, it
-rewrites `animeCompassSession` without `watchlist`, `watched` and
-`notInterested`; export a backup first. Watched titles and negative feedback
-survive that round trip, because they are also stored in the legacy title
-fields. This frontend creates no server-side account
-and no multi-device collection.
+If production is ever rolled back to a revision that serves the **old vanilla
+frontend** and Likes are changed there, it rewrites `animeCompassSession`
+without `watchlist`, `watched` and `notInterested`; export a backup first.
+Watched titles and negative feedback survive that round trip, because they are
+also stored in the legacy title fields.

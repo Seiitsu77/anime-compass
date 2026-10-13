@@ -1,7 +1,7 @@
 # How deep the paged feed goes, and what depth costs
 
 Measurements for `POST /api/recommend/page`. Design and guarantees are in
-`frontend-react/README.md` and `app/services/recommendation_sequence.py`; this
+`frontend/README.md` and `app/services/recommendation_sequence.py`; this
 document is the numbers.
 
 Two sources:

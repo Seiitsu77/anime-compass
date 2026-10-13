@@ -13,7 +13,7 @@ reranker, with three differences from a normal run:
     python scripts/dev_e2e_backend.py --no-debug # production-like diagnostics
 
 Point Vite at it with `API_PROXY_TARGET=http://127.0.0.1:8011` in
-`frontend-react/.env.local`. Never use this entry point for a deployment.
+`frontend/.env.local`. Never use this entry point for a deployment.
 """
 
 from __future__ import annotations
