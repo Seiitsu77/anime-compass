@@ -7,25 +7,57 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch makes the older run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# No job here needs a secret, and none may call a language model. Gemini is
+# replaced by scripted providers in every test; blanking the key makes that a
+# property of the workflow rather than of each test remembering to mock it.
+env:
+  GEMINI_API_KEY: ""
+
 jobs:
-  verify:
+  frontend:
+    name: React (tests and production build)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: frontend-react/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
       - run: npm ci --no-audit --no-fund
-        working-directory: frontend-react
       - run: npm test
-        working-directory: frontend-react
       - run: npm run build
-        working-directory: frontend-react
+      # Handed to the integration job, so FastAPI is tested against the bundle
+      # this commit actually produces.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          if-no-files-found: error
+          retention-days: 3
+
+  python:
+    name: Python ${{ matrix.python-version }} (lint, types, tests)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is what production and the Streamlit demo run; 3.10 is the
+        # oldest version pyproject.toml claims to support.
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt
@@ -37,13 +69,71 @@ jobs:
       - run: python -m ruff format --check app backend scripts tests run_app.py streamlit_app.py
       # The domain layer under backend/ is type-checked alongside the web layer.
       - run: python -m mypy app backend scripts
-      - run: python -m pytest --cov --cov-report=term-missing --cov-report=xml
-      - run: node --check frontend/app.js
+      # Run first and on their own so a broken contract is named in the job
+      # summary instead of being one failure among several hundred tests.
+      - name: Agent contracts (intent schema, tool routing, write safety, grounding)
+        run: >
+          python -m pytest -q
+          tests/test_intent_write_safety.py
+          tests/test_phase3_tool_calling.py
+          tests/test_prompt_architecture.py
+          tests/test_providers.py
+          tests/test_provider_diagnostics.py
+          tests/test_replan.py
+          tests/test_replan_integration.py
+          tests/test_browse_and_grounding.py
+      - name: Recommendation contracts (fast path, pagination, feedback, reranker parity)
+        run: >
+          python -m pytest -q
+          tests/test_fast_path_api_contract.py
+          tests/test_fast_path_integration.py
+          tests/test_recommendation_pagination.py
+          tests/test_recommendation_feedback.py
+          tests/test_production_routing.py
+          tests/test_production_artifact.py
+          tests/test_reranker_serving.py
+          tests/test_reranker_parity.py
+      - name: Full test suite with coverage
+        run: python -m pytest --cov --cov-report=term-missing --cov-report=xml
+
+  integration:
+    name: FastAPI serves the built React bundle
+    runs-on: ubuntu-latest
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip install -e . --no-deps
+      # Without the bundle these tests skip. Here it must exist, so a missing
+      # bundle is a failure.
+      - name: Static assets, API routing and image layout
+        env:
+          REQUIRE_FRONTEND_BUNDLE: "1"
+        run: python -m pytest -q tests/test_production_frontend.py tests/test_api.py tests/test_startup_readiness.py
+      - name: Container launcher parses
+        run: sh -n scripts/container_start.sh
+      - name: Deploy script parses
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/deploy_cloudrun.ps1), [ref]$null, [ref]$errors)
+          if ($errors.Count) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
 
   # Streamlit Community Cloud installs requirements.txt and nothing else. This
   # job reproduces that exactly, so an import added to the demo's module graph
   # fails here rather than on the public page.
-  deployment-smoke:
+  streamlit-demo:
+    name: Streamlit demo (its own minimal install)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
