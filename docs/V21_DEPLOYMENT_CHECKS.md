@@ -1,8 +1,13 @@
 # Anime Compass V2.1 deployment checks
 
 Verified on 2026-10-12. Status: the corrected candidate below passed every check
-and is deployed with 0% of traffic. Production traffic has not been changed and
-remains 100% on `anime-compass-00003-kfx`.
+at 0% of traffic and was then promoted. Production is 100% on
+`anime-compass-v21-94d6c10`; `anime-compass-00003-kfx` is retained for rollback:
+
+    gcloud run services update-traffic anime-compass --region=us-central1 --to-revisions=anime-compass-00003-kfx=100
+
+After promotion the deployment checker passed against the production URL and 22
+of 22 live Gemini turns there behaved correctly.
 
 ## Candidate
 
@@ -11,7 +16,7 @@ remains 100% on `anime-compass-00003-kfx`.
 - Cloud Build: [successful candidate build](https://console.cloud.google.com/cloud-build/builds/51af7fa0-f314-4a95-b28b-49fb4464f22f?project=937277373885).
 - Image tag: `us-central1-docker.pkg.dev/project-4ea00490-f490-4348-86b/anime-compass/anime-compass:v21-check-94d6c10`.
 - Tested immutable digest: `sha256:daab1cb7a5d758a26263576f97a054efddee262a9dde8ffbde85be9ae7995266`.
-- Cloud Run revision: `anime-compass-v21-94d6c10`, tag `v21-94d6c10`, 0% traffic,
+- Cloud Run revision: `anime-compass-v21-94d6c10`, tag `v21-94d6c10`, also
   reachable at `https://v21-94d6c10---anime-compass-b2c6mriqrq-uc.a.run.app`.
 
 Deploy the tested digest when approving the release. The main working folder
