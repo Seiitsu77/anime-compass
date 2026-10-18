@@ -152,9 +152,9 @@ and 40 for a recommendation.
   revision was verified at 0% traffic, including live Gemini requests, before it was promoted.
 
 The revision in production was built from tag
-[`v2.1.0`](https://github.com/Seiitsu77/anime-compass/tree/v2.1.0); the digest, build and verification record
-are in [docs/V21_DEPLOYMENT_CHECKS.md](docs/V21_DEPLOYMENT_CHECKS.md). `main` has since moved the React source
-into `frontend/` and removed the legacy frontend, which the next image will pick up. Setup and rollback:
+[`v2.1.1`](https://github.com/Seiitsu77/anime-compass/tree/v2.1.1), the first image built from the single React
+frontend in `frontend/`; the digest, build and verification record are in
+[docs/V211_DEPLOYMENT_CHECKS.md](docs/V211_DEPLOYMENT_CHECKS.md). Setup and rollback:
 [docs/CLOUD_RUN_DEPLOYMENT.md](docs/CLOUD_RUN_DEPLOYMENT.md).
 
 ## Run locally
