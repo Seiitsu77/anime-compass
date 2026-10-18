@@ -35,6 +35,8 @@ REQUIRED_CONSTRAINT_FIELDS: tuple[str, ...] = (
     "required_staff",
     "required_voice_actors",
     "required_characters",
+    "required_title_families",
+    "excluded_title_families",
 )
 
 # Fields the relaxation ladder is allowed to drop, in the order it drops them.

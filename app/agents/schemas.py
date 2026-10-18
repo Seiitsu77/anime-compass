@@ -132,6 +132,17 @@ class AgentIntent(BaseModel):
     preferred_voice_actors: list[str] = Field(default_factory=list, max_length=20)
     required_characters: list[str] = Field(default_factory=list, max_length=20)
     preferred_characters: list[str] = Field(default_factory=list, max_length=20)
+    # What the model says results must belong to. A proposal only: the backend
+    # checks each name against the conversation and the catalog before any of
+    # them becomes `required_title_families`.
+    required_franchises: list[str] = Field(default_factory=list, max_length=5)
+    # Not offered to the provider: the backend sets this on every request
+    # from the message and from `required_franchises`, after verifying each
+    # name. A franchise constraint decides which rows exist at all, so it never
+    # rests on the model's word alone. See `provider_json_schema`.
+    required_title_families: list[str] = Field(default_factory=list, max_length=5)
+    # Set by the backend from the message, like required_title_families.
+    excluded_title_families: list[str] = Field(default_factory=list, max_length=5)
     formats: list[str] = Field(default_factory=list, max_length=10)
     min_score: float | None = Field(default=None, ge=0, le=10)
     min_year: int | None = Field(default=None, ge=1900, le=2100)
@@ -189,6 +200,9 @@ class AgentIntent(BaseModel):
             "preferred_voice_actors",
             "required_characters",
             "preferred_characters",
+            "required_franchises",
+            "required_title_families",
+            "excluded_title_families",
             "formats",
             "excluded_titles",
             "seen_titles",
@@ -269,6 +283,9 @@ class AgentIntent(BaseModel):
             preferred_characters=self.preferred_characters,
             required_voice_actors=self.required_voice_actors,
             preferred_voice_actors=self.preferred_voice_actors,
+            required_franchises=self.required_franchises,
+            required_title_families=self.required_title_families,
+            excluded_title_families=self.excluded_title_families,
             formats=self.formats,
             min_score=self.min_score,
             min_year=self.min_year,
@@ -301,6 +318,8 @@ class AgentIntent(BaseModel):
         """Return a compact generation schema; full validation still uses this model."""
         schema = deepcopy(cls.model_json_schema())
         schema.get("properties", {}).pop("inferred_constraints", None)
+        schema.get("properties", {}).pop("required_title_families", None)
+        schema.get("properties", {}).pop("excluded_title_families", None)
         definitions = schema.get("$defs", {})
         definitions.pop("IntentInferredConstraint", None)
 

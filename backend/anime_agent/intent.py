@@ -133,6 +133,13 @@ class StructuredIntent:
     preferred_characters: list[str] = field(default_factory=list)
     required_voice_actors: list[str] = field(default_factory=list)
     preferred_voice_actors: list[str] = field(default_factory=list)
+    # Franchises the parser says results must belong to. Unverified.
+    required_franchises: list[str] = field(default_factory=list)
+    # The verified constraint: title-family keys the backend accepted from the
+    # message and from `required_franchises`. See title_family.py.
+    required_title_families: list[str] = field(default_factory=list)
+    # Title-family keys the message excludes ("but not Gundam").
+    excluded_title_families: list[str] = field(default_factory=list)
     formats: list[str] = field(default_factory=list)
     min_score: float | None = None
     min_year: int | None = None

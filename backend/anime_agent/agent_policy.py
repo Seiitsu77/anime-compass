@@ -99,6 +99,14 @@ Selection and feedback rules:
 - "More like the fourth, and I watched the second" uses 1-based result indices.
 - Explicit instructions in the latest message override conflicting older session context.
 
+Franchise rules:
+- A franchise or series the results must belong to goes in required_franchises, using the
+  user's own words for its name: "Gundam movies", "anything Gundam from 2022", "only Naruto",
+  "the Fate series". Keep it there for a follow-up that changes only the format or year.
+- A title the results should resemble goes in reference_titles, never in required_franchises:
+  "similar to Gundam", "movies like Gundam", "something like Naruto".
+- A studio ("Studio Ghibli", "Kyoto Animation") is required_studios, not a franchise.
+
 Ranking rules:
 - "highest rated" and "highest scored" map to rank_by=score, sort_order=desc.
 - "most popular" maps to rank_by=popularity, sort_order=asc because lower catalog

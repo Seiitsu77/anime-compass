@@ -16,6 +16,16 @@ Two invariants keep this safe:
   specific voice actor, studio, staff member, or character must either be
   satisfied exactly or return nothing. Relaxing those would silently break the
   grounding contract that the rest of the agent enforces.
+* **A franchise request is not replanned at all.** "Gundam movies after 2020"
+  names the family, the type and the year as one question. Dropping the year to
+  find rows would answer a question nobody asked, and the honest answer when the
+  catalog holds nothing matching is that it holds nothing matching. The
+  orchestrator therefore skips the ladder entirely when the intent carries a
+  required title family.
+* **A constraint the user stated is never relaxed.** "Movies after 2020" names a
+  format and a year in so many words. The caller passes those fields as
+  ``protected`` and the ladder skips them, so an empty result is reported as
+  empty instead of being answered with TV series or with 2019.
 * **The loop is bounded.** At most ``max_steps`` relaxations are attempted, so a
   request costs a predictable amount of work.
 """
@@ -96,6 +106,8 @@ PROTECTED_FIELDS = frozenset(
         "required_staff",
         "required_voice_actors",
         "required_characters",
+        "required_title_families",
+        "excluded_title_families",
         "entity_mentions",
         "intent",
     }
@@ -119,15 +131,21 @@ def has_required_entities(intent: AgentIntent) -> bool:
     """True when the request pins results to specific catalog entities."""
     return any(
         bool(getattr(intent, field, None))
-        for field in ("required_studios", "required_staff", "required_voice_actors", "required_characters")
+        for field in (
+            "required_studios",
+            "required_staff",
+            "required_voice_actors",
+            "required_characters",
+            "required_title_families",
+        )
     )
 
 
-def candidate_relaxations(intent: AgentIntent) -> list[str]:
+def candidate_relaxations(intent: AgentIntent, protected: frozenset[str] = frozenset()) -> list[str]:
     """Fields on this intent that the ladder could still relax, in order."""
     available: list[str] = []
     for field, _description, transform in RELAXATION_LADDER:
-        if transform(intent) is not None:
+        if field not in protected and transform(intent) is not None:
             available.append(field)
     return available
 
@@ -148,6 +166,7 @@ def replan_with_state(
     *,
     max_steps: int = 2,
     initial_response: dict[str, Any] | None = None,
+    protected: frozenset[str] = frozenset(),
 ) -> ReplanOutcome:
     """`replan_until_results`, plus the runtime state it passed through.
 
@@ -161,6 +180,7 @@ def replan_with_state(
         execute,
         max_steps=max_steps,
         initial_response=initial_response,
+        protected=protected,
     )
     state = ReplanState.initial(intent, max_replans=max_steps)
     running = intent
@@ -184,6 +204,7 @@ def replan_until_results(
     *,
     max_steps: int = 2,
     initial_response: dict[str, Any] | None = None,
+    protected: frozenset[str] = frozenset(),
 ) -> tuple[AgentIntent, dict[str, Any], list[RelaxationStep]]:
     """Relax constraints until the catalog returns rows or the budget is spent.
 
@@ -191,7 +212,7 @@ def replan_until_results(
     fields relaxed so far, and returns its response payload. It must not
     re-derive those fields from the raw user message. Pass ``initial_response``
     when the caller has already run the unrelaxed plan, so it is not executed
-    twice.
+    twice. Fields in ``protected`` are never relaxed.
 
     Returns the intent that produced the final response, that response, and the
     ordered list of relaxations that were applied.
@@ -212,6 +233,8 @@ def replan_until_results(
             break
         progressed = False
         for field, description, transform in RELAXATION_LADDER:
+            if field in protected:
+                continue
             outcome = transform(current_intent)
             if outcome is None:
                 continue

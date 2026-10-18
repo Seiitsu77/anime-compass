@@ -37,6 +37,8 @@ class RankCatalogArguments(ToolArguments):
     exclude_genres: list[str] = Field(default_factory=list, max_length=30)
     formats: list[str] = Field(default_factory=list, max_length=10)
     required_studios: list[str] = Field(default_factory=list, max_length=20)
+    required_title_families: list[str] = Field(default_factory=list, max_length=5)
+    excluded_title_families: list[str] = Field(default_factory=list, max_length=5)
     min_score: float | None = Field(default=None, ge=0, le=10)
     min_year: int | None = Field(default=None, ge=1900, le=2100)
     max_year: int | None = Field(default=None, ge=1900, le=2100)
@@ -97,6 +99,8 @@ class RecommendAnimeArguments(ToolArguments):
         default_factory=list,
         max_length=30,
     )
+    required_title_families: list[str] = Field(default_factory=list, max_length=5)
+    excluded_title_families: list[str] = Field(default_factory=list, max_length=5)
     novelty_preference: Literal["neutral", "less_famous", "mainstream"] = "neutral"
     exclude_related_series: bool = True
     one_per_series: bool = True

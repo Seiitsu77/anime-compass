@@ -17,7 +17,21 @@ from .intent import (
     intent_parser_prompt,
     parse_structured_intent,
 )
-from .recommender import AnimeRecommender, normalize_label, series_key, tokenize
+from .recommender import (
+    AnimeRecommender,
+    entity_name_variants,
+    natural_join,
+    normalize_label,
+    series_key,
+    tokenize,
+)
+from .title_family import (
+    FamilyResolution,
+    constraints_from_intent,
+    enforce_result_eligibility,
+    resolve_excluded_title_families,
+    resolve_required_title_families,
+)
 from .write_policy import (
     DISLIKED,
     EXCLUDED,
@@ -126,6 +140,29 @@ RECOMMENDATION_FOLLOWUP_PATTERNS = (
 # and in one place. It used to be a substring list here, and "without" was on
 # it: "Introduce Cowboy Bebop without spoilers" was read as a rejection, routed
 # to a session write, and -- on the rule path -- stored Cowboy Bebop as excluded.
+
+# Roles that make a named person staff rather than a voice actor.
+NON_VOICE_ROLE_CUE = (
+    r"(?:directed|written|created|composed|produced|storyboarded|animated|illustrated|drawn|designed)\s+by\s*$"
+    r"|(?:director|writer|screenwriter|creator|composer|author|mangaka|producer|animator)\s+(?:named\s+)?$"
+    r"|(?:director|writer|creator|composer|author)\s+of\s+\S+(?:\s+\S+)?\s*$"
+)
+
+# "between 2015 and 2017", "from 2015 to 2017", "2015-2017": both ends. The
+# fallback path read none of these, so a year window typed by the user was
+# silently dropped whenever Gemini was unavailable.
+YEAR_RANGE = re.compile(
+    r"\b(?:between\s+)?(?P<start>19\d{2}|20\d{2})\s*(?:-|\u2013|to|and|through|until)\s*(?P<end>19\d{2}|20\d{2})\b"
+)
+# "released in 2019", "aired in 2019": one year exactly -- but not "released
+# in 2019 or later", which the open-ended patterns below read.
+YEAR_EXACT = re.compile(
+    r"\b(?:released|aired|premiered|came\s+out|made|from)\s+in\s+(19\d{2}|20\d{2})\b"
+    r"(?!\s*(?:\+|(?:or|and)\s+(?:later|after|newer|earlier|before|older)|onwards?))"
+)
+
+# Everyday names for catalog formats.
+FORMAT_SYNONYMS = {"films?": "Movie", "feature films?": "Movie"}
 
 # Words that mark a request to be told about a title rather than to change
 # anything. "Without spoilers" and "no spoilers" constrain how an answer is
@@ -524,13 +561,23 @@ class AnimeAgent:
         filter then emptied the result set.
         """
         message_key = self._entity_name_key(message)
-        matches: list[str] = []
+        matched: list[tuple[str, str]] = []
         for record in self.entity_resolver.by_type.get(entity_type, []):
             if not normalize_label(record.name):
                 continue
             variants = [variant for variant in record.variants if len(variant) >= 4]
-            if any(re.search(rf"(?:^|\s){re.escape(variant)}(?:$|\s)", message_key) for variant in variants):
-                matches.append(record.name)
+            hits = [variant for variant in variants if re.search(rf"(?:^|\s){re.escape(variant)}(?:$|\s)", message_key)]
+            if hits:
+                matched.append((record.name, max(hits, key=len)))
+        # The longest name covering a span wins. "Kana Hanazawa" also contains
+        # "Kana", the credited name of a different voice actor, and keeping both
+        # turned one requested person into two required ones that no title has.
+        spans = [f" {variant} " for _name, variant in matched]
+        matches = [
+            name
+            for name, variant in matched
+            if not any(f" {variant} " in span and f" {variant} " != span for span in spans)
+        ]
         return self._dedupe_entity_names(matches)
 
     def _respond_from_intent(
@@ -559,13 +606,33 @@ class AnimeAgent:
         # Decided from the user's words, before the intent is normalized and
         # long before any tool runs. Nothing the parser produced can widen it.
         gate = PreferenceWriteGate(self._preference_write_authorization(message))
-        self._normalize_explicit_request(intent, message, relaxed_fields, gate.authorization)
+        families = self._normalize_explicit_request(
+            intent, message, relaxed_fields, gate.authorization, history=history
+        )
         self._enforce_write_eligibility(intent, message, gate)
         response = self._dispatch_intent(intent, message, history, session_id, session, gate)
+        self.enforce_result_eligibility(intent, response)
         debug = response.setdefault("_debug", {})
         if isinstance(debug, dict):
             debug["write_safety"] = gate.describe()
+            debug["franchise_constraints"] = families.describe()
         return response
+
+    def explicit_constraint_fields(self, message: str) -> frozenset[str]:
+        """Constraints the user stated in so many words, which replanning may never drop.
+
+        "Gundam movies after 2020" states a format and a year. Relaxing either to
+        find something would answer a question nobody asked; an empty result is
+        the honest answer and is reported as one.
+        """
+        fields: set[str] = set()
+        if self._matched_formats(message):
+            fields.add("formats")
+        if self._requested_min_year(message) is not None:
+            fields.add("min_year")
+        if self._requested_max_year(message) is not None:
+            fields.add("max_year")
+        return frozenset(fields)
 
     def _dispatch_intent(
         self,
@@ -702,13 +769,120 @@ class AnimeAgent:
             INFORMATION_REQUEST_QUALIFIERS.search(message.casefold())
         )
 
+    def enforce_result_eligibility(self, intent: StructuredIntent, response: dict[str, Any]) -> list[str]:
+        """Last check before any candidate can be named in an answer.
+
+        Every stage above this one can be wrong in the same direction: hybrid
+        scoring ranks a near miss highly, diversity reranking reaches further
+        down the list, a follow-up merge reopens an earlier intent, and a
+        language model writes up whatever it is handed. So the constraint is
+        re-checked here against the catalog itself, after all of them, and a row
+        that no longer satisfies it is removed rather than explained away.
+
+        Returns the titles it dropped. An empty list is the normal case.
+        """
+        constraints = constraints_from_intent(intent, self._exact_title_ids(intent.excluded_titles))
+        dropped = enforce_result_eligibility(self.recommender, constraints, response)
+        if not dropped:
+            return []
+        for step in response.get("trace") or []:
+            if not isinstance(step, dict):
+                continue
+            result = step.get("result")
+            if not isinstance(result, dict) or not isinstance(result.get("results"), list):
+                continue
+            if step.get("tool") == "recommend_anime":
+                response["answer"] = format_recommendation_answer(
+                    result["results"],
+                    limit=intent.top_k,
+                    required_title_families=intent.required_title_families,
+                    constraint_summary=self._constraint_summary(intent),
+                )
+            elif step.get("tool") == "rank_catalog":
+                response["answer"] = format_catalog_ranking_answer(
+                    result["results"],
+                    result.get("diagnostics", {}),
+                )
+        debug = response.setdefault("_debug", {})
+        if isinstance(debug, dict):
+            debug["final_eligibility_dropped_titles"] = dropped
+            debug["final_eligibility_constraints"] = constraints.describe()
+        return dropped
+
+    @staticmethod
+    def _genres_typed_outside(genres: list[str], message: str, family_names: list[str]) -> list[str]:
+        """The genres the user typed somewhere other than inside a franchise name."""
+        text = f" {' '.join(tokenize(message))} "
+        for name in family_names:
+            name_text = " ".join(tokenize(name))
+            if name_text:
+                text = text.replace(f" {name_text} ", " | ")
+        aliases_by_genre: dict[str, list[str]] = {}
+        for alias, genre in GENRE_ALIASES.items():
+            aliases_by_genre.setdefault(genre, []).append(alias)
+        kept = []
+        for genre in genres:
+            terms = {" ".join(tokenize(term)) for term in (genre, *aliases_by_genre.get(genre, []))}
+            if any(term and f" {term} " in text for term in terms):
+                kept.append(genre)
+        return kept
+
+    @staticmethod
+    def _constraint_summary(intent: StructuredIntent) -> str:
+        """The hard constraints of a request, in words a user would recognise."""
+        parts: list[str] = []
+        if intent.required_studios:
+            parts.append("studio " + natural_join(intent.required_studios))
+        if intent.required_staff:
+            parts.append("staff " + natural_join(intent.required_staff))
+        if intent.required_voice_actors:
+            parts.append("voiced by " + natural_join(intent.required_voice_actors))
+        if intent.required_characters:
+            parts.append("featuring " + natural_join(intent.required_characters))
+        if intent.formats:
+            parts.append("format " + " or ".join(intent.formats))
+        if intent.min_year is not None and intent.max_year is not None:
+            if intent.min_year == intent.max_year:
+                parts.append(f"released in {intent.min_year}")
+            else:
+                parts.append(f"released {intent.min_year}-{intent.max_year}")
+        elif intent.min_year is not None:
+            parts.append(f"released in {intent.min_year} or later")
+        elif intent.max_year is not None:
+            parts.append(f"released in {intent.max_year} or earlier")
+        if intent.max_episodes is not None:
+            parts.append(f"at most {intent.max_episodes} episodes")
+        if intent.min_score is not None:
+            parts.append(f"score {intent.min_score:g} or higher")
+        if intent.excluded_title_families:
+            parts.append("not " + natural_join([value.title() for value in intent.excluded_title_families]))
+        return ", ".join(parts)
+
+    def _exact_title_ids(self, titles: list[str]) -> frozenset[int]:
+        """Catalog ids whose title or alias is exactly one of `titles`.
+
+        Exact on purpose. The final eligibility check removes these ids, and a
+        fuzzy match there would remove a title the user never excluded.
+        """
+        wanted = {normalize_label(value) for value in titles if normalize_label(value)}
+        if not wanted:
+            return frozenset()
+        return frozenset(
+            int(item["id"])
+            for item in self.recommender.catalog
+            if any(
+                normalize_label(name) in wanted for name in (item.get("title"), *(item.get("aliases") or [])) if name
+            )
+        )
+
     def _normalize_explicit_request(
         self,
         intent: StructuredIntent,
         message: str,
         relaxed_fields: frozenset[str] = frozenset(),
         authorization: PreferenceWriteAuthorization | None = None,
-    ) -> None:
+        history: list[dict[str, str]] | None = None,
+    ) -> FamilyResolution:
         """Make literal user constraints authoritative over probabilistic parsing.
 
         Fields listed in ``relaxed_fields`` are exempt: a replanning caller has
@@ -718,6 +892,38 @@ class AnimeAgent:
         if authorization is None:
             authorization = self._preference_write_authorization(message)
         explicit_formats = self._matched_formats(message)
+        # A franchise name is a subject, not a taste signal. The model proposes
+        # franchises (and often writes the name into catalog_query); the
+        # message is read for the attributive and "only X" patterns; and every
+        # name is verified against the conversation and the catalog before it
+        # constrains anything. It is never exempted by `relaxed_fields`: the
+        # relaxation ladder does not carry this field, and a request for a
+        # franchise the catalog cannot satisfy is answered with nothing rather
+        # than with neighbours.
+        # A follow-up merged from the session arrives already carrying the
+        # previous turn's families; they are re-verified like any proposal.
+        proposed = [*intent.required_franchises, *intent.required_title_families]
+        if intent.catalog_query and intent.intent in {"recommend", "rank_catalog"}:
+            proposed.append(intent.catalog_query)
+        earlier_user_messages = [
+            str(turn.get("content") or "") for turn in (history or [])[-8:] if turn.get("role") == "user"
+        ]
+        families = resolve_required_title_families(
+            message,
+            self.recommender,
+            proposed=proposed,
+            earlier_user_messages=earlier_user_messages,
+            follow_up=bool(earlier_user_messages) and self._looks_like_recommendation_followup(message),
+        )
+        intent.required_title_families = list(families.families)
+        # "But not Gundam" is enforced the same way, before ranking and again
+        # at the final check, and is not on the relaxation ladder either.
+        intent.excluded_title_families = resolve_excluded_title_families(
+            message,
+            self.recommender,
+            required=intent.required_title_families,
+            earlier_user_messages=earlier_user_messages,
+        )
         include_genres, exclude_genres = self._matched_genre_constraints(message)
         requested_limit = self._requested_limit(message)
         min_score = self._requested_min_score(message)
@@ -737,6 +943,16 @@ class AnimeAgent:
                 intent.include_genres = include_genres
             if "exclude_genres" not in relaxed_fields:
                 intent.exclude_genres = exclude_genres
+        family_names = [*intent.required_title_families, *intent.excluded_title_families]
+        if family_names:
+            # "Detective Conan" names a franchise; it does not also ask for the
+            # Detective genre, and "Gundam movies" does not ask for Mecha. A
+            # genre filter is applied before ranking, so a genre read out of a
+            # franchise name (or inferred from one) removed whole franchises:
+            # 79 Detective Conan entries became zero.
+            typed = "\n".join([*earlier_user_messages, message])
+            intent.include_genres = self._genres_typed_outside(intent.include_genres, typed, family_names)
+            intent.exclude_genres = self._genres_typed_outside(intent.exclude_genres, typed, family_names)
         if explicit_formats and "formats" not in relaxed_fields:
             intent.formats = explicit_formats
         if requested_limit is not None:
@@ -786,11 +1002,24 @@ class AnimeAgent:
                     intent.entity_mentions.append(EntityMention(studio, "studio", "direct"))
                     existing.add(key)
 
+        if intent.required_title_families:
+            # Enumerating one franchise is the opposite of the de-duplication
+            # these two flags exist for: the user asked for the entries in a
+            # series, so collapsing them to one entry answers nothing.
+            intent.one_per_series = False
+            intent.exclude_related_series = False
+
         if self._looks_like_catalog_ranking(message):
             intent.intent = "rank_catalog"
             intent.catalog_query = self._catalog_ranking_query(message)
             intent.rank_by = self._requested_rank_field(message)
             intent.sort_order = self._requested_sort_order(message)
+        elif intent.required_title_families and intent.intent in {"search", "conversational"}:
+            # "Are there any Gundam movies after 2020?" carries no request verb,
+            # so the generic promotion below does not fire, and a franchise
+            # question routed to conversation is answered from model memory.
+            intent.intent = "recommend"
+            intent.free_text_preferences = intent.free_text_preferences or message
         elif (
             asks_for_catalog_items
             and intent.intent in {"search", "conversational"}
@@ -830,6 +1059,7 @@ class AnimeAgent:
         intent.exclude_genres = [
             value for value in dict.fromkeys(intent.exclude_genres) if value.casefold() not in format_keys
         ]
+        return families
 
     def _respond_with_catalog_ranking(self, intent: StructuredIntent, message: str) -> dict[str, Any]:
         requested_limit = self._requested_limit(message)
@@ -841,6 +1071,8 @@ class AnimeAgent:
             "exclude_genres": intent.exclude_genres,
             "formats": intent.formats,
             "required_studios": intent.required_studios,
+            "required_title_families": intent.required_title_families,
+            "excluded_title_families": intent.excluded_title_families,
             "min_score": intent.min_score,
             "min_year": intent.min_year,
             "max_year": intent.max_year,
@@ -859,6 +1091,7 @@ class AnimeAgent:
             "agent": self.status(),
             "_debug": {
                 "selected_tool": "rank_catalog",
+                "required_title_families": intent.required_title_families,
                 "candidate_count_before_filter": len(self.recommender.catalog),
                 "candidate_count_after_filter": result["diagnostics"]["candidate_count"],
                 "ignored_session_fields": ["all"],
@@ -942,6 +1175,8 @@ class AnimeAgent:
             "required_voice_actor_ids": resolution_debug["required_voice_actor_ids"],
             "preferred_voice_actors": intent.preferred_voice_actors,
             "required_entity_constraints": resolution_debug["required_entity_constraints"],
+            "required_title_families": intent.required_title_families,
+            "excluded_title_families": intent.excluded_title_families,
             "formats": intent.formats,
             "min_score": intent.min_score,
             "min_year": intent.min_year,
@@ -970,7 +1205,12 @@ class AnimeAgent:
             },
             gate,
         )
-        fallback = format_recommendation_answer(result["results"], limit=intent.top_k)
+        fallback = format_recommendation_answer(
+            result["results"],
+            limit=intent.top_k,
+            required_title_families=intent.required_title_families,
+            constraint_summary=self._constraint_summary(intent),
+        )
         if intent.excluded_titles:
             fallback = "I will avoid the titles you excluded, including related entries when requested.\n\n" + fallback
         content = fallback
@@ -1010,6 +1250,10 @@ class AnimeAgent:
             "_debug": {
                 "selected_tool": "recommend_anime",
                 **resolution_debug,
+                "required_title_families": intent.required_title_families,
+                "candidate_count_after_title_family_filter": diagnostics.get(
+                    "candidate_count_after_title_family_filter", 0
+                ),
                 "candidate_count_before_filter": diagnostics.get("candidate_count_before_filter", 0),
                 "candidate_count_after_voice_actor_filter": diagnostics.get(
                     "candidate_count_after_voice_actor_filter", 0
@@ -1273,6 +1517,7 @@ class AnimeAgent:
             "preferred_characters",
             "required_voice_actors",
             "preferred_voice_actors",
+            "required_title_families",
             "formats",
         )
         for field_name in list_fields:
@@ -1701,6 +1946,7 @@ class AnimeAgent:
                 intent.required_staff,
                 intent.required_characters,
                 intent.required_voice_actors,
+                intent.required_title_families,
             )
         )
 
@@ -2019,7 +2265,11 @@ class AnimeAgent:
     def _extract_required_voice_actors(self, message: str) -> list[str]:
         if not self._requires_voice_actor_membership(message):
             return []
-        names: list[str] = self._named_catalog_entities(message, "voice_actor")
+        names: list[str] = [
+            name
+            for name in self._named_catalog_entities(message, "voice_actor")
+            if not self._named_in_non_voice_role(name, message)
+        ]
         patterns = (
             r"\bvoice[- ]?actor\s+(?:called|named)\s+(.+?)(?=[.!?]|$)",
             r"\bvoiced\s+by\s+(.+?)(?=[.!?]|$)",
@@ -2036,6 +2286,25 @@ class AnimeAgent:
                     names.append(candidate)
         return self._dedupe_entity_names(names)
 
+    def _named_in_non_voice_role(self, name: str, message: str) -> bool:
+        """True when the message names this person as director, writer, composer, ...
+
+        "Anime directed by Makoto Shinkai" asks for his work as a director. He
+        also has one voice credit, and treating him as a required voice actor
+        cut nine titles to one.
+        """
+        if re.search(r"\b(?:voiced\s+by|voice[- ]?actor|seiyuu|cast)\b", message, re.IGNORECASE):
+            return False
+        text = self._entity_name_key(message)
+        for variant in entity_name_variants(name):
+            position = text.find(variant)
+            if position < 0:
+                continue
+            before = text[max(0, position - 40) : position]
+            if re.search(NON_VOICE_ROLE_CUE, before):
+                return True
+        return False
+
     def _requires_voice_actor_membership(self, message: str) -> bool:
         explicit_pattern = bool(
             re.search(
@@ -2047,7 +2316,11 @@ class AnimeAgent:
             or re.search(r"\b(?:voiced by|featuring the voice of)\b", message, re.IGNORECASE)
         )
         named_actor_relationship = bool(
-            self._named_catalog_entities(message, "voice_actor")
+            [
+                name
+                for name in self._named_catalog_entities(message, "voice_actor")
+                if not self._named_in_non_voice_role(name, message)
+            ]
             and re.search(
                 r"\b(?:recommend|suggest|find|show|give|list|with|featuring|involving|involved|voiced)\b",
                 message,
@@ -2549,6 +2822,12 @@ class AnimeAgent:
 
     def _requested_min_year(self, message: str) -> int | None:
         message_key = message.casefold()
+        span = YEAR_RANGE.search(message_key)
+        if span:
+            return int(span.group("start"))
+        exact = YEAR_EXACT.search(message_key)
+        if exact:
+            return int(exact.group(1))
         patterns = (
             (r"\b(19\d{2}|20\d{2})\s*(?:or later|and later|\+|onward|onwards)\b", 0),
             (r"\b(?:from|since)\s+(19\d{2}|20\d{2})\b", 0),
@@ -2564,6 +2843,12 @@ class AnimeAgent:
     @staticmethod
     def _requested_max_year(message: str) -> int | None:
         message_key = message.casefold()
+        span = YEAR_RANGE.search(message_key)
+        if span:
+            return int(span.group("end"))
+        exact = YEAR_EXACT.search(message_key)
+        if exact:
+            return int(exact.group(1))
         patterns = (
             (r"\b(?:through|until|up to|no later than|at most)\s+(19\d{2}|20\d{2})\b", 0),
             (r"\b(?:before|older than)\s+(19\d{2}|20\d{2})\b", -1),
@@ -2640,10 +2925,24 @@ class AnimeAgent:
         return None
 
     def _matched_formats(self, message: str) -> list[str]:
+        """Catalog media types named literally in the message.
+
+        The optional trailing "s" is not cosmetic. Catalog types are singular
+        ("Movie", "Special"), people ask in the plural, and without it "Gundam
+        movies after 2020" carried no type constraint at all -- the filter the
+        user typed was silently dropped, and TV series came back as movies.
+        """
         found = []
+        text = message.casefold()
         for media_type in self.recommender.meta()["types"]:
-            if re.search(rf"(?<![a-z0-9]){re.escape(media_type.casefold())}(?![a-z0-9])", message.casefold()):
+            if re.search(rf"(?<![a-z0-9]){re.escape(media_type.casefold())}s?(?![a-z0-9])", text):
                 found.append(media_type)
+        # People say "film"; the catalog says "Movie". Without this the
+        # fallback path read "five Gundam films" as having no format at all.
+        for synonym, media_type in FORMAT_SYNONYMS.items():
+            if media_type not in found and media_type in self.recommender.meta()["types"]:
+                if re.search(rf"(?<![a-z0-9]){synonym}(?![a-z0-9])", text):
+                    found.append(media_type)
         return found
 
     def _catalog_ranking_query(self, message: str) -> str:
@@ -2972,6 +3271,8 @@ class AnimeAgent:
             exclude_genres=[str(value) for value in arguments.get("exclude_genres") or []],
             formats=[str(value) for value in arguments.get("formats") or []],
             required_studios=[str(value) for value in arguments.get("required_studios") or []],
+            required_title_families=[str(value) for value in arguments.get("required_title_families") or []],
+            excluded_title_families=[str(value) for value in arguments.get("excluded_title_families") or []],
             min_score=float(arguments["min_score"]) if arguments.get("min_score") is not None else None,
             min_year=int(arguments["min_year"]) if arguments.get("min_year") is not None else None,
             max_year=int(arguments["max_year"]) if arguments.get("max_year") is not None else None,
@@ -3088,6 +3389,8 @@ class AnimeAgent:
             required_entity_constraints=[
                 dict(value) for value in arguments.get("required_entity_constraints") or [] if isinstance(value, dict)
             ],
+            required_title_families=[str(value) for value in arguments.get("required_title_families") or []],
+            excluded_title_families=[str(value) for value in arguments.get("excluded_title_families") or []],
             novelty_preference=str(arguments.get("novelty_preference") or "neutral"),
             exclude_related_series=bool(arguments.get("exclude_related_series", True)),
             one_per_series=bool(arguments.get("one_per_series")),
@@ -3310,16 +3613,44 @@ empty phrases such as "great choice" or "excellent question."
 """
 
 
-def format_recommendation_answer(results: list[dict[str, Any]], limit: int | None = None) -> str:
+def format_recommendation_answer(
+    results: list[dict[str, Any]],
+    limit: int | None = None,
+    required_title_families: list[str] | None = None,
+    constraint_summary: str = "",
+) -> str:
+    families = [value for value in required_title_families or [] if value]
     if not results:
+        if families:
+            # State what is true rather than offering a way to get some other
+            # answer. A franchise question has a checkable answer in this
+            # catalog, and "none" is one of its legitimate values.
+            named = natural_join([value.title() for value in families])
+            detail = f" ({constraint_summary})" if constraint_summary else ""
+            return (
+                f"The catalog has no {named} entries matching those constraints{detail}, "
+                "so there is no verified match to show. I will not substitute "
+                "similar titles from other franchises."
+            )
+        if constraint_summary:
+            # "Studio Ghibli movies after 2020" already names a format; telling
+            # the user to add one would be wrong. Say what matched nothing.
+            return (
+                f"Nothing in the catalog matches all of: {constraint_summary}. "
+                "There is no verified match to show, and I will not drop any of "
+                "those requirements to fill the list."
+            )
         return "I could not find catalog matches for that request. Try adding a genre, title, or format."
 
     verified_actor_results = bool(results) and all(item.get("matched_voice_actors") for item in results[:limit])
-    lines = [
-        "Here are the catalog titles with verified voice-actor credits:"
-        if verified_actor_results
-        else "Here is a focused set from the catalog:"
-    ]
+    if families:
+        named = natural_join([value.title() for value in families])
+        header = f"These are the verified {named} catalog entries matching your constraints:"
+    elif verified_actor_results:
+        header = "Here are the catalog titles with verified voice-actor credits:"
+    else:
+        header = "Here is a focused set from the catalog:"
+    lines = [header]
     for item in results[:limit]:
         score = f"{item['score']:.2f}" if item.get("score") else "unrated"
         reasons = item.get("reasons") or []
@@ -3330,7 +3661,14 @@ def format_recommendation_answer(results: list[dict[str, Any]], limit: int | Non
 
 
 def format_catalog_ranking_answer(results: list[dict[str, Any]], diagnostics: dict[str, Any]) -> str:
+    families = [str(value) for value in diagnostics.get("required_title_families") or [] if value]
     if not results:
+        if families:
+            named = natural_join([value.title() for value in families])
+            return (
+                f"The catalog has no {named} entries matching those filters, so there is "
+                "no verified match to show. I will not substitute similar titles."
+            )
         return "No catalog titles matched all of those ranking filters."
     field = str(diagnostics.get("sort_by") or "score").replace("_", " ")
     order = "highest first" if diagnostics.get("sort_order") == "desc" else "lowest first"

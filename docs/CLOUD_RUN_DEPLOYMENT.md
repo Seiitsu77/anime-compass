@@ -188,6 +188,9 @@ $fast.diagnostics.recommendation_path                      # fast
 $fast.diagnostics.learned_reranker_applied                 # True
 
 python scripts/smoke_e2e.py --base-url $url --with-agent   # waits for readiness, then 7 cases
+
+# Every returned ID checked against its request's hard constraints (docs/EVALUATION.md).
+python scripts/evaluate_agent_constraints.py --base-url $url --require-provider gemini
 ```
 
 ## If the build fails with PERMISSION_DENIED
