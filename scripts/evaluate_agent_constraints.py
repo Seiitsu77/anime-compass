@@ -249,15 +249,20 @@ def run(
     require_provider: str | None,
     retries: int,
     delay: float,
+    out: Path | None = None,
 ) -> list[dict[str, Any]]:
+    """Run every case; print and save each turn as soon as it is checked."""
     records: list[dict[str, Any]] = []
     for case in cases:
         history: list[dict[str, str]] = []
         for index, turn in enumerate(case["turns"], start=1):
             expect = turn.get("expect", {})
-            attempts = 0
+            # Every attempt is checked, not only the last: an answer from the
+            # rule fallback is what a user gets whenever Gemini is unavailable,
+            # so it is held to the same constraints as the model's.
+            attempt_log: list[dict[str, Any]] = []
+            fallback_violations: list[str] = []
             while True:
-                attempts += 1
                 started = time.perf_counter()
                 try:
                     response, error = chat(turn["message"], list(history)), None
@@ -265,13 +270,29 @@ def run(
                     response, error = {}, f"{type(exc).__name__}: {exc}"
                 elapsed = time.perf_counter() - started
                 parser_mode = response.get("parser_mode") or (response.get("debug") or {}).get("parser_mode")
+                attempt_checked, _attempt_problems = check_turn(response, expect, by_id)
+                violating = [row["id"] for row in attempt_checked if row["violations"]]
+                attempt_log.append(
+                    {
+                        "parser_mode": parser_mode,
+                        "elapsed_s": round(elapsed, 1),
+                        "results": len(attempt_checked),
+                        "violating_ids": violating,
+                        "error": error,
+                    }
+                )
                 live = require_provider is None or parser_mode == require_provider
-                if (live and error is None) or attempts > retries:
+                if (live and error is None) or len(attempt_log) > retries:
                     break
-                time.sleep(delay * attempts)
+                if violating:
+                    fallback_violations.append(
+                        f"attempt {len(attempt_log)} ({parser_mode}) returned ineligible ids {violating}"
+                    )
+                time.sleep(delay * len(attempt_log))
             checked, problems = check_turn(response, expect, by_id)
             if error:
                 problems.insert(0, error)
+            problems.extend(fallback_violations)
             if require_provider and parser_mode != require_provider:
                 problems.append(f"parsed by {parser_mode}, not {require_provider}")
             intent = (response.get("debug") or {}).get("validated_intent") or {}
@@ -280,7 +301,7 @@ def run(
                 "turn": index,
                 "message": turn["message"],
                 "parser_mode": parser_mode,
-                "attempts": attempts,
+                "attempts": attempt_log,
                 "elapsed_s": round(elapsed, 1),
                 "intent": {
                     key: intent.get(key)
@@ -304,8 +325,10 @@ def run(
                 "answer": response.get("answer", ""),
             }
             records.append(record)
+            modes = ",".join(str(attempt["parser_mode"]) for attempt in attempt_log)
             print(
-                f"{'FAIL' if problems else 'ok  '} [{case['name']} t{index}] parser={parser_mode} {record['elapsed_s']}s"
+                f"{'FAIL' if problems else 'ok  '} [{case['name']} t{index}] parsers={modes} {record['elapsed_s']}s",
+                flush=True,
             )
             print(
                 f"     {len(checked)} results: "
@@ -313,10 +336,13 @@ def run(
                     f"{row['title']} [{row['type']} {row['start_year']}]"
                     + (" !! " + ", ".join(row["violations"]) if row["violations"] else "")
                     for row in checked[:10]
-                )
+                ),
+                flush=True,
             )
             for problem in problems:
-                print(f"     PROBLEM: {problem}")
+                print(f"     PROBLEM: {problem}", flush=True)
+            if out is not None:
+                out.write_text(json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
             history.append({"role": "user", "content": turn["message"]})
             history.append({"role": "assistant", "content": str(response.get("answer") or "")[:3900]})
             time.sleep(delay)
@@ -354,6 +380,7 @@ def main() -> int:
             require_provider=args.require_provider,
             retries=args.retries,
             delay=args.delay,
+            out=args.out,
         )
     else:
         sys.path.insert(0, str(PROJECT_ROOT))
@@ -380,12 +407,23 @@ def main() -> int:
                 require_provider=args.require_provider,
                 retries=args.retries,
                 delay=args.delay,
+                out=args.out,
             )
 
     if args.out:
         args.out.write_text(json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
     failed = sum(1 for record in records if record["problems"])
-    print(f"\n{len(records) - failed}/{len(records)} turns satisfied every hard constraint")
+    attempts = [attempt for record in records for attempt in record["attempts"]]
+    modes: dict[str, int] = {}
+    for attempt in attempts:
+        modes[str(attempt["parser_mode"])] = modes.get(str(attempt["parser_mode"]), 0) + 1
+    final_modes: dict[str, int] = {}
+    for record in records:
+        final_modes[str(record["parser_mode"])] = final_modes.get(str(record["parser_mode"]), 0) + 1
+    violating = sum(1 for attempt in attempts if attempt["violating_ids"])
+    print(f"\nattempts by parser: {modes}; final answers by parser: {final_modes}")
+    print(f"attempts returning an ineligible id: {violating} of {len(attempts)}")
+    print(f"{len(records) - failed}/{len(records)} turns satisfied every hard constraint")
     return 1 if failed else 0
 
 
