@@ -1,0 +1,244 @@
+[
+  {
+    "name": "gundam movies after 2020 (the production failure)",
+    "turns": [
+      {
+        "message": "Hey man, recommend me some Gundam movies. I want the year after 2020.",
+        "expect": {"family_any": ["gundam"], "formats": ["Movie"], "min_year": 2021, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "gundam movies released after 2020",
+    "turns": [
+      {
+        "message": "Can you recommend Gundam movies released after 2020?",
+        "expect": {"family_any": ["gundam"], "formats": ["Movie"], "min_year": 2021, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "five gundam films from 2021 onward",
+    "turns": [
+      {
+        "message": "Give me five Gundam films from 2021 onward.",
+        "expect": {"family_any": ["gundam"], "formats": ["Movie"], "min_year": 2021, "min_results": 3, "max_results": 5}
+      }
+    ]
+  },
+  {
+    "name": "gundam tv series",
+    "turns": [
+      {
+        "message": "Recommend some Gundam TV series.",
+        "expect": {"family_any": ["gundam"], "formats": ["TV"], "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "only gundam movies",
+    "turns": [
+      {
+        "message": "Only suggest Gundam movies.",
+        "expect": {"family_any": ["gundam"], "formats": ["Movie"], "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "similar to gundam is a reference, not a restriction",
+    "turns": [
+      {
+        "message": "Recommend anime similar to Gundam.",
+        "expect": {"no_family_constraint": true, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "movies like gundam after 2020 keep format and year hard",
+    "turns": [
+      {
+        "message": "Recommend movies like Gundam after 2020.",
+        "expect": {"formats": ["Movie"], "min_year": 2021, "no_family_constraint": true, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "naruto movies after 2010",
+    "turns": [
+      {
+        "message": "Recommend Naruto movies released after 2010.",
+        "expect": {"family_any": ["naruto"], "formats": ["Movie"], "min_year": 2011, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "studio ghibli movies after 2020 is a studio, and the catalog may hold none",
+    "turns": [
+      {
+        "message": "Recommend Studio Ghibli movies after 2020.",
+        "expect": {"studio": "Studio Ghibli", "formats": ["Movie"], "min_year": 2021, "allow_empty": true, "no_family_constraint": true}
+      }
+    ]
+  },
+  {
+    "name": "an unsatisfiable franchise request is answered honestly",
+    "turns": [
+      {
+        "message": "Recommend Gundam movies released after 2035.",
+        "expect": {"family_any": ["gundam"], "formats": ["Movie"], "min_year": 2036, "no_results_expected": true, "answer_contains": ["no verified match"]}
+      }
+    ]
+  },
+  {
+    "name": "a follow-up keeps the franchise and changes the format",
+    "turns": [
+      {
+        "message": "Recommend Gundam movies released after 2020.",
+        "expect": {"family_any": ["gundam"], "formats": ["Movie"], "min_year": 2021, "min_results": 3}
+      },
+      {
+        "message": "What about TV series instead?",
+        "expect": {"family_any": ["gundam"], "formats": ["TV"], "min_results": 1}
+      }
+    ]
+  },
+  {
+    "name": "an english alias reaches the romaji entries",
+    "turns": [
+      {
+        "message": "Recommend Demon Slayer movies.",
+        "expect": {"family_any": ["demon slayer", "kimetsu no yaiba"], "formats": ["Movie"], "min_results": 1}
+      }
+    ]
+  },
+  {
+    "name": "attack on titan movies",
+    "turns": [
+      {
+        "message": "Recommend Attack on Titan movies.",
+        "expect": {"family_any": ["attack on titan", "shingeki no kyojin"], "formats": ["Movie"], "min_results": 1}
+      }
+    ]
+  },
+  {
+    "name": "a franchise named by an ordinary word",
+    "turns": [
+      {
+        "message": "Recommend Fate movies.",
+        "expect": {"family_prefix_any": ["fate"], "formats": ["Movie"], "min_results": 2}
+      }
+    ]
+  },
+  {
+    "name": "detective conan, not every title containing conan",
+    "turns": [
+      {
+        "message": "Recommend Detective Conan movies.",
+        "expect": {"family_any": ["detective conan", "meitantei conan"], "formats": ["Movie"], "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "a franchise exclusion",
+    "turns": [
+      {
+        "message": "Recommend mecha anime but not Gundam.",
+        "expect": {"excluded_families": ["gundam"], "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "anything but a franchise",
+    "turns": [
+      {
+        "message": "Recommend mecha movies, anything but Gundam.",
+        "expect": {"excluded_families": ["gundam"], "formats": ["Movie"], "min_results": 2}
+      }
+    ]
+  },
+  {
+    "name": "an exclusion survives a follow-up",
+    "turns": [
+      {
+        "message": "Recommend mecha anime but not Gundam.",
+        "expect": {"excluded_families": ["gundam"], "min_results": 3}
+      },
+      {
+        "message": "Show me more mecha, movies this time.",
+        "expect": {"excluded_families": ["gundam"], "formats": ["Movie"], "min_results": 1}
+      }
+    ]
+  },
+  {
+    "name": "a studio requirement with a format",
+    "turns": [
+      {
+        "message": "Recommend Kyoto Animation movies.",
+        "expect": {"studio": "Kyoto Animation", "formats": ["Movie"], "min_results": 2}
+      }
+    ]
+  },
+  {
+    "name": "a director is staff, not a voice actor",
+    "turns": [
+      {
+        "message": "Recommend anime directed by Makoto Shinkai.",
+        "expect": {"staff": "Shinkai, Makoto", "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "a voice actor whose name contains another credited name",
+    "turns": [
+      {
+        "message": "Recommend anime with Kana Hanazawa.",
+        "expect": {"voice_actor": "Hanazawa, Kana", "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "a character requirement",
+    "turns": [
+      {
+        "message": "Recommend anime with Lelouch Lamperouge.",
+        "expect": {"character": "Lamperouge, Lelouch", "min_results": 1}
+      }
+    ]
+  },
+  {
+    "name": "a year window",
+    "turns": [
+      {
+        "message": "Recommend TV anime released between 2015 and 2017.",
+        "expect": {"formats": ["TV"], "min_year": 2015, "max_year": 2017, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "a plural format before a year",
+    "turns": [
+      {
+        "message": "Recommend some OVAs from before 2000.",
+        "expect": {"formats": ["OVA"], "max_year": 1999, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "a single release year",
+    "turns": [
+      {
+        "message": "Recommend anime released in 2019.",
+        "expect": {"min_year": 2019, "max_year": 2019, "min_results": 3}
+      }
+    ]
+  },
+  {
+    "name": "an episode ceiling",
+    "turns": [
+      {
+        "message": "Recommend romance anime with at most 12 episodes.",
+        "expect": {"max_episodes": 12, "min_results": 3}
+      }
+    ]
+  }
+]

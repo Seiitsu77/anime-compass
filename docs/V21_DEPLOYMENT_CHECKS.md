@@ -1,5 +1,9 @@
 # Anime Compass V2.1 deployment checks
 
+Superseded on 2026-10-18 by V2.1.1, which fixes franchise constraints in agent
+answers: see [V211_DEPLOYMENT_CHECKS.md](V211_DEPLOYMENT_CHECKS.md). The revision
+below is now the rollback target.
+
 Verified on 2026-10-12. Status: the corrected candidate below passed every check
 at 0% of traffic and was then promoted. Production is 100% on
 `anime-compass-v21-94d6c10`; `anime-compass-00003-kfx` is retained for rollback:

@@ -265,6 +265,16 @@ def normalize_label(text: str | None) -> str:
     return " ".join(tokenize(text))
 
 
+def family_key(text: str | None) -> str:
+    """A franchise name as a sequence of every word in it, lower-cased.
+
+    Unlike `normalize_label` this keeps stopwords. Dropping them made "Love to
+    Live By" carry the name "love live", and "Shingeki no Kyojin" lose the "no"
+    a user types.
+    """
+    return " ".join(TOKEN_RE.findall(str(text or "").lower()))
+
+
 def entity_name_variants(text: str | None) -> set[str]:
     value = str(text or "").strip()
     if not value:
@@ -421,6 +431,17 @@ def normalize_weights(weights: dict[str, float]) -> dict[str, float]:
     return {channel: value / total for channel, value in cleaned.items()}
 
 
+# How a phrase is told apart from an ordinary word: see
+# AnimeRecommender.title_family_reads_as_name.
+TITLE_FAMILY_NAME_RATIO = 0.5
+TITLE_FAMILY_NAME_FLOOR = 3
+# Alias bridging: see AnimeRecommender._bridged_family.
+TITLE_FAMILY_BRIDGE_SUPPORT = 0.8
+# Titles in "Name/..." form needed before an ordinary word is read as a name.
+TITLE_FAMILY_SLASH_MIN_TITLES = 3
+FAMILY_NAME_CONNECTORS = frozenset({"a", "an", "and", "de", "ga", "ni", "no", "of", "the", "to", "wa", "wo", "x"})
+
+
 class AnimeRecommender:
     def __init__(
         self,
@@ -433,6 +454,14 @@ class AnimeRecommender:
         self.semantic_index = semantic_index
         self.collaborative_index = collaborative_index
         self._entity_resolver: EntityResolver | None = None
+        self._title_family_blobs: list[tuple[int, str]] | None = None
+        self._title_family_contains: dict[str, frozenset[int]] = {}
+        self._title_family_members: dict[str, frozenset[int]] = {}
+        self._title_family_name_verdicts: dict[str, bool] = {}
+        self._title_family_bridges: dict[str, frozenset[int]] = {}
+        self._title_family_slash: dict[str, bool] = {}
+        self._synopsis_blobs: list[tuple[int, str]] | None = None
+        self._studio_name_phrases: frozenset[str] | None = None
         self.weights = normalize_weights({**DEFAULT_CHANNEL_WEIGHTS, **(weights or {})})
         self.item_ids = [int(item["id"]) for item in catalog]
         self.index_by_id = {anime_id: index for index, anime_id in enumerate(self.item_ids)}
@@ -496,6 +525,246 @@ class AnimeRecommender:
         if self._entity_resolver is None:
             self._entity_resolver = EntityResolver(self.catalog)
         return self._entity_resolver
+
+    # ------------------------------------------------------------ title family
+
+    def _title_family_index(self) -> list[tuple[int, str]]:
+        """Every catalog title and alias, normalised, ready for phrase lookup.
+
+        One blob per anime, aliases separated by a pipe so a phrase can never
+        span two of them -- "gundam mobile" must not match a row whose title is
+        "Kidou Senshi Gundam" and whose alias is "Mobile Suit Gundam".
+
+        Built on first use. The fast ALS path and ordinary similarity requests
+        never ask for a family, and a recommender used only for scoring should
+        not pay for an index it will not read.
+        """
+        if self._title_family_blobs is None:
+            blobs: list[tuple[int, str]] = []
+            for item in self.catalog:
+                keys = {family_key(value) for value in (item.get("title"), *(item.get("aliases") or [])) if value}
+                cleaned = sorted(key for key in keys if key)
+                blobs.append((int(item["id"]), " " + " | ".join(cleaned) + " " if cleaned else " "))
+            self._title_family_blobs = blobs
+        return self._title_family_blobs
+
+    def _title_family_containment(self, key: str) -> frozenset[int]:
+        """Catalog ids whose title or one alias contains `key` as a whole phrase."""
+        cached = self._title_family_contains.get(key)
+        if cached is None:
+            needle = f" {key} "
+            cached = frozenset(anime_id for anime_id, blob in self._title_family_index() if needle in blob)
+            self._title_family_contains[key] = cached
+        return cached
+
+    def _synopsis_index(self) -> list[tuple[int, str]]:
+        if self._synopsis_blobs is None:
+            self._synopsis_blobs = [
+                (int(item["id"]), " " + family_key(item.get("synopsis")) + " ") for item in self.catalog
+            ]
+        return self._synopsis_blobs
+
+    def title_family_reads_as_name(self, phrase: str) -> bool:
+        """Does this catalog use `phrase` as the name of a family of titles?
+
+        A franchise name is rarely written in the synopsis of a title that does
+        not carry it; an ordinary word is written everywhere. Measured on this
+        catalog, synopses of non-carrying titles mention "gundam" 0.07 times per
+        carrying title, "naruto" 0.15 and "evangelion" 0.46, while "zombie" is at
+        0.78, "ninja" 1.13, "cat" 5.4 and "girl" 10.6. A phrase reads as a name
+        when that count is at most half the titles that carry it, with a floor
+        so a three-title family is not decided by one stray mention.
+        """
+        key = family_key(phrase)
+        if not key:
+            return False
+        cached = self._title_family_name_verdicts.get(key)
+        if cached is None:
+            contained = self._title_family_containment(key)
+            # The family's own entries do not count against it, including the
+            # ones the name reaches only through an alias bridge: the other
+            # Kimetsu no Yaiba synopses say "Demon Slayer Corps".
+            family = contained | self._bridged_family(key, contained) if contained else contained
+            cached = bool(family) and self._reads_as_name_given(key, family)
+            self._title_family_name_verdicts[key] = cached
+        return cached
+
+    def _reads_as_name_given(self, key: str, members: frozenset[int]) -> bool:
+        needle = f" {key} "
+        outside = sum(1 for anime_id, blob in self._synopsis_index() if anime_id not in members and needle in blob)
+        return outside <= max(TITLE_FAMILY_NAME_FLOOR, TITLE_FAMILY_NAME_RATIO * len(members))
+
+    def title_family_members(self, phrase: str) -> frozenset[int]:
+        """Catalog ids that belong to the family named `phrase`.
+
+        This is the whole of franchise membership as this dataset can support
+        it. There is no franchise or related-works column, so the title is the
+        evidence: an entry belongs when its title or one of its aliases carries
+        the name as a whole phrase, anywhere in the title -- "Turn A Gundam",
+        "Kidou Senshi Gundam SEED Freedom", "Boruto: Naruto the Movie". Nothing
+        here infers membership from studio, genre, characters or similarity.
+
+        A name that is also an ordinary word is held to a stricter rule, because
+        "Fate" is a franchise and "Bayonetta: Bloody Fate" is not in it: the name
+        must open the title or alias, or be written in the franchise's slash
+        form ("Manga de Wakaru! Fate/Grand Order").
+        """
+        key = family_key(phrase)
+        if not key:
+            return frozenset()
+        cached = self._title_family_members.get(key)
+        if cached is None:
+            contained = self._title_family_containment(key)
+            if not contained:
+                cached = contained
+            elif self.title_family_reads_as_name(key):
+                cached = contained | self._bridged_family(key, contained)
+            else:
+                cached = self._leading_family(key)
+            self._title_family_members[key] = cached
+        return cached
+
+    def _bridged_family(self, key: str, members: frozenset[int]) -> frozenset[int]:
+        """Members the name reaches only through another language's title.
+
+        Aliases are attached unevenly: "Demon Slayer" is on one of the nine
+        "Kimetsu no Yaiba" entries and "My Hero Academia" on eight of the
+        twenty-five "Boku no Hero Academia" ones. When the entries the name does
+        reach all share one other series name -- the leading words of their
+        titles, up to a colon or dash, ending on a real word rather than a
+        connector such as "no" -- that series name is the same franchise, and
+        its entries are added.
+
+        Support has to be near-unanimous (80%), so a family without one shared
+        series name, such as Gundam, is left exactly as it was.
+        """
+        cached = self._title_family_bridges.get(key)
+        if cached is not None:
+            return cached
+        cached = self._compute_bridge(key, members)
+        self._title_family_bridges[key] = cached
+        return cached
+
+    def _compute_bridge(self, key: str, members: frozenset[int]) -> frozenset[int]:
+        support: dict[str, int] = {}
+        for anime_id in members:
+            heads: set[str] = set()
+            for name in self._item_series_heads(anime_id):
+                tokens = name.split()
+                for length in range(2, min(len(tokens), 6) + 1):
+                    if tokens[length - 1] not in FAMILY_NAME_CONNECTORS:
+                        heads.add(" ".join(tokens[:length]))
+            for head in heads:
+                if head != key and f" {key} " not in f" {head} ":
+                    support[head] = support.get(head, 0) + 1
+        needed = max(1, int(len(members) * TITLE_FAMILY_BRIDGE_SUPPORT + 0.999))
+        candidates = [head for head, count in support.items() if count >= needed]
+        if not candidates:
+            return frozenset()
+        bridge = max(candidates, key=lambda head: (len(head.split()), support[head]))
+        bridged = self._title_family_containment(bridge)
+        # Judged on its own titles only, so one bridge never leads to another.
+        if not self._reads_as_name_given(bridge, bridged):
+            return frozenset()
+        if len(self.catalog) >= 500 and len(bridged) > len(self.catalog) * 0.01:
+            return frozenset()
+        return bridged
+
+    def _item_series_heads(self, anime_id: int) -> list[str]:
+        item = self.by_id.get(anime_id) or {}
+        heads = []
+        for name in (item.get("title"), *(item.get("aliases") or [])):
+            if not name:
+                continue
+            head = re.split(r"\s*(?::|\s-\s|\(|\[)", str(name), maxsplit=1)[0]
+            key = family_key(head)
+            if key:
+                heads.append(key)
+        return heads
+
+    def title_family_uses_slash_notation(self, phrase: str) -> bool:
+        """True when several titles open with this name and a slash: "Fate/Zero".
+
+        That notation is how a franchise whose name is an ordinary word marks
+        its entries, and across this catalog only "Fate" uses it on more than a
+        couple of titles -- so it lets "Fate movies" be read as a franchise
+        without a language model, while "cat movies" still is not.
+        """
+        key = family_key(phrase)
+        if not key or key.replace(" ", "").isdigit():
+            return False
+        cached = self._title_family_slash.get(key)
+        if cached is None:
+            opening = re.compile("^" + r"[\W_]+".join(map(re.escape, key.split())) + r"\s*/\S")
+            count = sum(
+                1
+                for item in self.catalog
+                if any(
+                    opening.match(str(name).casefold())
+                    for name in (item.get("title"), *(item.get("aliases") or []))
+                    if name
+                )
+            )
+            cached = count >= TITLE_FAMILY_SLASH_MIN_TITLES
+            self._title_family_slash[key] = cached
+        return cached
+
+    def _leading_family(self, key: str) -> frozenset[int]:
+        slash = re.compile(r"(?<![a-z0-9])" + r"[\W_]+".join(map(re.escape, key.split())) + r"\s*/")
+        members: set[int] = set()
+        for item in self.catalog:
+            for name in (item.get("title"), *(item.get("aliases") or [])):
+                if not name:
+                    continue
+                label = family_key(name)
+                if label == key or label.startswith(key + " ") or slash.search(str(name).casefold()):
+                    members.add(int(item["id"]))
+                    break
+        return frozenset(members)
+
+    def title_family_document_frequency(self, phrase: str) -> int:
+        """How many catalog titles carry `phrase`."""
+        return len(self.title_family_members(phrase))
+
+    def _required_title_family_ids(self, family_keys: list[str]) -> set[int] | None:
+        """Ids allowed by a required-family constraint, or None when there is none.
+
+        The families are a disjunction: "Gundam movies" carries one name, and a
+        request naming two franchises is asking for either of them. An empty
+        return value is meaningful and must not be confused with the None that
+        means "no family was required" -- a name this catalog does not carry
+        eliminates every candidate rather than none.
+        """
+        if not family_keys:
+            return None
+        allowed: set[int] = set()
+        for key in family_keys:
+            allowed |= self.title_family_members(key)
+        return allowed
+
+    def studio_name_phrases(self) -> frozenset[str]:
+        """Every contiguous word run inside an animation studio's name.
+
+        A caller uses this to refuse to read a studio name as a franchise:
+        "Ghibli" is part of "Studio Ghibli" and "Sunrise" is a studio outright,
+        so neither may become a title family, and a studio request is never
+        silently narrowed to the titles that happen to spell the studio out.
+
+        Producers are deliberately not included. A producer list names the
+        companies that own franchises, and including it blocked Pokemon --
+        "The Pokemon Company International" is a producer -- so "Pokemon movies"
+        got no franchise constraint at all.
+        """
+        if self._studio_name_phrases is None:
+            phrases: set[str] = set()
+            for entity_type in ("studio",):
+                for record in self.entity_resolver.by_type.get(entity_type, []):
+                    tokens = normalize_label(record.name).split()
+                    for start in range(len(tokens)):
+                        for end in range(start + 1, len(tokens) + 1):
+                            phrases.add(" ".join(tokens[start:end]))
+            self._studio_name_phrases = frozenset(phrases)
+        return self._studio_name_phrases
 
     def model_info(self) -> dict[str, Any]:
         return {
@@ -741,6 +1010,8 @@ class AnimeRecommender:
         exclude_genres: list[str] | None = None,
         formats: list[str] | None = None,
         required_studios: list[str] | None = None,
+        required_title_families: list[str] | None = None,
+        excluded_title_families: list[str] | None = None,
         min_score: float | None = None,
         min_year: int | None = None,
         max_year: int | None = None,
@@ -766,8 +1037,20 @@ class AnimeRecommender:
         format_keys = {value.casefold() for value in formats or [] if value}
         studio_keys = {normalize_label(value) for value in required_studios or [] if value}
         excluded_keys = {normalize_label(value) for value in excluded_titles or [] if value}
+        family_keys = [family_key(value) for value in required_title_families or [] if family_key(value)]
+        family_ids = self._required_title_family_ids(family_keys)
+        excluded_family_ids = (
+            self._required_title_family_ids(
+                [family_key(value) for value in excluded_title_families or [] if family_key(value)]
+            )
+            or set()
+        )
         candidates = []
         for item in self.catalog:
+            if family_ids is not None and int(item["id"]) not in family_ids:
+                continue
+            if int(item["id"]) in excluded_family_ids:
+                continue
             title_key = normalize_label(item.get("title"))
             title_tokens = {
                 token
@@ -826,6 +1109,7 @@ class AnimeRecommender:
             "operation": "rank_catalog",
             "query": query,
             "required_studios": list(required_studios or []),
+            "required_title_families": family_keys,
             "sort_by": sort_by,
             "sort_order": order,
             "candidate_count": len(candidates),
@@ -894,6 +1178,8 @@ class AnimeRecommender:
         required_voice_actor_ids: list[int] | None = None,
         preferred_voice_actors: list[str] | None = None,
         required_entity_constraints: list[dict[str, Any]] | None = None,
+        required_title_families: list[str] | None = None,
+        excluded_title_families: list[str] | None = None,
         novelty_preference: str = "neutral",
         exclude_related_series: bool = True,
         one_per_series: bool = False,
@@ -932,13 +1218,27 @@ class AnimeRecommender:
             normalize_label(value) for value in required_characters or [] if normalize_label(value)
         }
         normalized_entity_constraints = self._normalize_required_entity_constraints(required_entity_constraints)
+        required_family_keys = [family_key(value) for value in required_title_families or [] if family_key(value)]
+        required_family_ids = self._required_title_family_ids(required_family_keys)
+        # "But not Gundam" removes the whole franchise before scoring, so no
+        # ranking channel can bring an entry of it back.
+        excluded_family_ids = (
+            self._required_title_family_ids(
+                [family_key(value) for value in excluded_title_families or [] if family_key(value)]
+            )
+            or set()
+        )
         has_required_voice_actor = bool(required_actor_input or required_actor_ids)
+        # A required franchise pins the answer to verified catalog rows exactly
+        # as a required studio or voice actor does, so it suppresses session
+        # taste the same way: a saved liked title must not reopen the result set.
         has_required_entity = bool(
             has_required_voice_actor
             or required_studio_keys
             or required_staff_keys
             or required_character_keys
             or normalized_entity_constraints
+            or required_family_keys
         )
         if has_required_entity:
             session_profile = {}
@@ -965,7 +1265,10 @@ class AnimeRecommender:
                     }
                     for constraint in normalized_entity_constraints
                 ],
+                "required_title_families": required_family_keys,
+                "title_family_catalog_matches": len(required_family_ids) if required_family_ids is not None else None,
                 "candidate_count_before_filter": 0,
+                "candidate_count_after_title_family_filter": 0,
                 "candidate_count_after_entity_filter": 0,
                 "candidate_count_after_voice_actor_filter": 0,
                 "verified_voice_actor_matches": 0,
@@ -1162,12 +1465,21 @@ class AnimeRecommender:
         verified_entities_by_anime: dict[int, list[dict[str, Any]]] = {}
         candidate_count_before_actor_filter = 0
         candidate_count_after_actor_filter = 0
+        candidate_count_after_family_filter = 0
         scoring_started = time.perf_counter()
 
         for item in self.catalog:
             anime_id = int(item["id"])
             if anime_id in blocked_set:
                 continue
+            # Franchise membership first, because it is the coarsest hard
+            # constraint and the one a ranking channel must never be able to
+            # outvote. Everything below this line only reorders what survives.
+            if required_family_ids is not None and anime_id not in required_family_ids:
+                continue
+            if anime_id in excluded_family_ids:
+                continue
+            candidate_count_after_family_filter += 1
             if not self._passes_filters(
                 item,
                 selected_genres=selected_genres,
@@ -1481,6 +1793,7 @@ class AnimeRecommender:
         diagnostic_target.update(
             {
                 "candidate_count_before_filter": candidate_count_before_actor_filter,
+                "candidate_count_after_title_family_filter": candidate_count_after_family_filter,
                 "candidate_count_after_entity_filter": candidate_count_after_actor_filter,
                 "candidate_count_after_voice_actor_filter": candidate_count_after_actor_filter,
                 "verified_voice_actor_matches": candidate_count_after_actor_filter,

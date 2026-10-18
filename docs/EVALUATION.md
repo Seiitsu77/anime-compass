@@ -98,6 +98,40 @@ the evaluation build ships a model trained on 19% fewer interactions, and
 measuring against the production build scores it on interactions it already
 trained on. The loader checks `artifact_role` and refuses a mismatch.
 
+## Agent constraint suite
+
+The metrics above score ranking quality. They cannot see an agent answer that
+ranks well and is wrong: "Gundam movies after 2020" once returned well-ranked
+2021 movies that were not Gundam. That kind of failure is checked separately.
+
+`data/evaluation/agent_constraints.json` holds short conversations, each turn
+stating the hard constraints its results must meet: franchise, format, year
+window, studio, staff, voice actor, character, episode ceiling, an excluded
+franchise. `scripts/evaluate_agent_constraints.py` sends each conversation to
+the agent and looks every returned ID up in the catalog. Its oracle is written
+independently of the code under test; franchise membership there is a
+whole-word match of the case's own names in a title or alias.
+
+A turn fails when a returned row breaks a constraint, when a similarity request
+("anime similar to Gundam") is turned into a franchise restriction, or when
+fewer rows come back than the catalog is known to hold. Returning fewer rows
+than asked for is not a failure: a short honest list is the right answer to a
+narrow question, and padding it is the bug.
+
+```powershell
+# In-process, built the way the server builds it; uses Gemini when a key is set.
+python scripts/evaluate_agent_constraints.py --in-process --require-provider gemini
+
+# Against a running deployment, such as a zero-traffic candidate.
+python scripts/evaluate_agent_constraints.py --base-url $url --require-provider gemini
+```
+
+`--require-provider gemini` fails any turn the rule fallback answered, so a
+"pass" means the live model path was exercised; drop it to check the fallback
+path, which must satisfy the same constraints. Both forms call a paid API and
+neither runs in CI. The deterministic versions of these cases, against a
+fixture catalog, are in `tests/test_constraint_regressions.py`.
+
 ## What this evaluation cannot tell you
 
 - **Real user satisfaction.** These are offline engineering proxies.

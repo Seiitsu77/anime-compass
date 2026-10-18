@@ -372,13 +372,22 @@ class AgentOrchestrator:
             self.settings.max_replan_steps > 0
             and validated_intent.intent in RETRIEVAL_INTENTS
             and result_count(response) == 0
+            # "Gundam movies after 2020" names the family, the type and the year
+            # as one question. Dropping the year to find rows would answer a
+            # different question; an empty catalog result is the true answer and
+            # is reported as one.
+            and not validated_intent.required_title_families
         ):
+            # A format or year the user typed is part of the question, not a
+            # filter to loosen until something comes back.
+            protected = await asyncio.to_thread(self.legacy_agent.explicit_constraint_fields, message)
             outcome = await asyncio.to_thread(
                 replan_with_state,
                 validated_intent,
                 execute,
                 max_steps=self.settings.max_replan_steps,
                 initial_response=response,
+                protected=protected,
             )
             replanned_intent, replanned_response, steps = outcome.intent, outcome.response, outcome.steps
             replan_state = outcome.state
@@ -400,6 +409,37 @@ class AgentOrchestrator:
         if relaxations:
             response["relaxations"] = relaxations
         response["_replan_state"] = replan_state
+        # The authoritative eligibility check. It runs here, on the response the
+        # model will actually be shown, and after replanning, so nothing between
+        # candidate generation and generation-time can reintroduce a row the
+        # request excluded. The legacy agent applies the same check to its own
+        # answer; this one exists because that answer is not the only thing that
+        # reaches the provider -- `verified_tool_trace` is.
+        dropped = await asyncio.to_thread(
+            self.legacy_agent.enforce_result_eligibility,
+            validated_intent.to_legacy(),
+            response,
+        )
+        if dropped:
+            logger.warning(
+                "agent_ineligible_results_dropped",
+                extra={
+                    "context": {
+                        "intent": validated_intent.intent,
+                        "dropped_count": len(dropped),
+                        "required_title_families": list(validated_intent.required_title_families),
+                        "remaining_count": result_count(response),
+                    }
+                },
+            )
+            provider_attempts.append(
+                {
+                    "phase": "final_eligibility",
+                    "provider": "backend",
+                    "outcome": "filtered",
+                    "dropped": len(dropped),
+                }
+            )
         try:
             calls = self.tool_registry.validate_trace(
                 validated_intent,

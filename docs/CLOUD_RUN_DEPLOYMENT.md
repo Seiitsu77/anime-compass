@@ -16,11 +16,12 @@ if `frontend/dist/index.html` is missing, so an image cannot come up without a
 UI. Hash navigation and the unchanged service URL preserve
 `localStorage.animeCompassSession` on the existing browser origin.
 
-The revision serving production today, `anime-compass-v21-94d6c10`, was built
-from tag `v2.1.0`, when the React source lived in `frontend-react/` beside a
-legacy vanilla frontend. The layout described here is what the next image
-built from `main` will use; see
-[V21_DEPLOYMENT_CHECKS.md](V21_DEPLOYMENT_CHECKS.md) for the deployed one.
+The revision serving production today, `anime-compass-franchise-753c4f3`, was
+built from tag `v2.1.1` with the layout described here; see
+[V211_DEPLOYMENT_CHECKS.md](V211_DEPLOYMENT_CHECKS.md). Its predecessor,
+`anime-compass-v21-94d6c10`, is the rollback target and was built from tag
+`v2.1.0`, when the React source lived in `frontend-react/` beside a legacy
+vanilla frontend.
 
 Cloud Build checks the candidate container before pushing it: model readiness,
 React assets, API routing, cursor pagination, exclusions, and legacy API aliases.
@@ -188,6 +189,9 @@ $fast.diagnostics.recommendation_path                      # fast
 $fast.diagnostics.learned_reranker_applied                 # True
 
 python scripts/smoke_e2e.py --base-url $url --with-agent   # waits for readiness, then 7 cases
+
+# Every returned ID checked against its request's hard constraints (docs/EVALUATION.md).
+python scripts/evaluate_agent_constraints.py --base-url $url --require-provider gemini
 ```
 
 ## If the build fails with PERMISSION_DENIED

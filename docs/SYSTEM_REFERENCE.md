@@ -57,12 +57,30 @@ excluded genres, required genres — and the tools re-execute. Two invariants ho
 
 - **Required entity constraints are never relaxed.** A request pinned to a voice actor, studio, staff member, or
   character is satisfied exactly or returns nothing. Relaxing those would break the grounding contract.
+- **Constraints the user typed are never relaxed.** A franchise ("Gundam movies"), an excluded franchise ("but not
+  Gundam"), and a format or year stated in the message are part of the question. A franchise request is not
+  replanned at all, and typed formats and years are removed from the ladder; an empty result is reported as one.
 - **The loop is bounded** by `MAX_REPLAN_STEPS` (default 2, `0` disables), so cost stays predictable.
 
 Every applied relaxation is recorded and returned on the response as `relaxations`, so the answer can state what
 was loosened instead of silently widening the request.
 
 For a request such as "recommend 7 anime with Yoshitsugu Matsuoka," the backend resolves the voice-actor record, joins its related anime IDs, filters to that verified subset, and only then ranks. Each result includes `matched_voice_actors`, character, language, entity ID, and relationship evidence.
+
+### Franchise constraints
+
+"Recommend Gundam movies after 2020" names what results must *be*; "anime similar to Gundam" names what they should
+resemble. The first is a hard constraint, the second a ranking signal. The catalog has no franchise column, so
+membership is read from titles and aliases (`backend/anime_agent/title_family.py`,
+`AnimeRecommender.title_family_members`): the name must read as a name in this catalog rather than an ordinary word
+("cat movies" is not a franchise), an ordinary-word name such as "Fate" counts only in its leading or `Fate/` form,
+and an English name reaches entries that carry only the romaji series name ("Demon Slayer" to "Kimetsu no Yaiba").
+
+Gemini proposes franchises (`required_franchises`); the backend reads the message itself as well, and accepts a name
+only if the user typed it, it is not a similarity reference, a genre, or a studio, and the catalog supports it. A
+follow-up that names no franchise ("what about TV series instead?") keeps the previous turn's. The verified families
+filter candidates before any ranking channel runs, are re-checked against the catalog at the final eligibility gate
+after replanning, and are never padded: three matching titles means three results.
 
 ## Recommendation Architecture
 
