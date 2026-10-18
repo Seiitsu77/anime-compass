@@ -36,7 +36,7 @@ from backend.anime_agent.title_family import (
     extract_required_title_families,
     is_eligible,
 )
-from scripts.evaluate_agent_constraints import DEFAULT_CASES, load_cases, violations
+from scripts.evaluate_agent_constraints import DEFAULT_CASES, load_cases, parser_provider, violations
 
 PRODUCTION_PROMPT = "Hey man, recommend me some Gundam movies. I want the year after 2020."
 
@@ -1007,3 +1007,19 @@ def test_the_suite_oracle_flags_each_kind_of_violation(by_id: dict[int, dict[str
     assert violations(by_id[43], {"family_prefix_any": ["fate"]}) == ["no title starts with ['fate']"]
     assert violations(by_id[40], {"family_prefix_any": ["fate"]}) == []
     assert violations(None, expect) == ["id not in catalog"]
+
+
+def test_the_suite_reads_the_parsing_provider_from_the_debug_trace() -> None:
+    """parser_mode says "structured_llm" for a Gemini parse; the provider is in the trace."""
+    gemini = {
+        "parser_mode": "structured_llm",
+        "debug": {"provider_attempts": [{"phase": "intent", "provider": "gemini", "outcome": "success"}]},
+    }
+    fallback = {
+        "parser_mode": "rule_fallback",
+        "debug": {"provider_attempts": [{"phase": "intent", "provider": "gemini", "outcome": "failed"}]},
+    }
+
+    assert parser_provider(gemini) == "gemini"
+    assert parser_provider(fallback) == "rule_fallback"
+    assert parser_provider({}) == "rule_fallback"

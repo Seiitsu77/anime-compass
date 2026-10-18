@@ -241,6 +241,18 @@ def wait_until_ready(status: Callable[[], int], timeout: float) -> None:
         time.sleep(2)
 
 
+def parser_provider(response: dict[str, Any]) -> str:
+    """Which provider parsed the intent, or "rule_fallback" when none did.
+
+    The response's `parser_mode` says only *how* the intent was parsed
+    ("structured_llm"); the provider that succeeded is in the debug trace.
+    """
+    for attempt in (response.get("debug") or {}).get("provider_attempts") or []:
+        if attempt.get("phase") == "intent" and attempt.get("outcome") == "success":
+            return str(attempt.get("provider"))
+    return "rule_fallback"
+
+
 def run(
     cases: list[dict[str, Any]],
     chat: Chat,
@@ -269,38 +281,49 @@ def run(
                 except Exception as exc:  # noqa: BLE001 - reported, never swallowed
                     response, error = {}, f"{type(exc).__name__}: {exc}"
                 elapsed = time.perf_counter() - started
-                parser_mode = response.get("parser_mode") or (response.get("debug") or {}).get("parser_mode")
+                debug = response.get("debug") or {}
+                parser_mode = response.get("parser_mode") or debug.get("parser_mode")
+                intent_outcomes = [
+                    f"{attempt.get('provider')}:{attempt.get('outcome')}"
+                    for attempt in debug.get("provider_attempts") or []
+                    if attempt.get("phase") == "intent"
+                ]
+                parsed_by = parser_provider(response)
                 attempt_checked, _attempt_problems = check_turn(response, expect, by_id)
                 violating = [row["id"] for row in attempt_checked if row["violations"]]
                 attempt_log.append(
                     {
                         "parser_mode": parser_mode,
+                        "parsed_by": parsed_by,
+                        "intent_outcomes": intent_outcomes,
+                        "provider_errors": [str(value)[:200] for value in debug.get("provider_errors") or []],
                         "elapsed_s": round(elapsed, 1),
                         "results": len(attempt_checked),
                         "violating_ids": violating,
                         "error": error,
                     }
                 )
-                live = require_provider is None or parser_mode == require_provider
+                live = require_provider is None or parsed_by == require_provider
                 if (live and error is None) or len(attempt_log) > retries:
                     break
                 if violating:
                     fallback_violations.append(
-                        f"attempt {len(attempt_log)} ({parser_mode}) returned ineligible ids {violating}"
+                        f"attempt {len(attempt_log)} ({parsed_by}) returned ineligible ids {violating}"
                     )
                 time.sleep(delay * len(attempt_log))
             checked, problems = check_turn(response, expect, by_id)
             if error:
                 problems.insert(0, error)
             problems.extend(fallback_violations)
-            if require_provider and parser_mode != require_provider:
-                problems.append(f"parsed by {parser_mode}, not {require_provider}")
+            if require_provider and parsed_by != require_provider:
+                problems.append(f"parsed by {parsed_by}, not {require_provider}")
             intent = (response.get("debug") or {}).get("validated_intent") or {}
             record = {
                 "case": case["name"],
                 "turn": index,
                 "message": turn["message"],
                 "parser_mode": parser_mode,
+                "parsed_by": parsed_by,
                 "attempts": attempt_log,
                 "elapsed_s": round(elapsed, 1),
                 "intent": {
@@ -325,9 +348,9 @@ def run(
                 "answer": response.get("answer", ""),
             }
             records.append(record)
-            modes = ",".join(str(attempt["parser_mode"]) for attempt in attempt_log)
+            modes = ",".join(str(attempt["parsed_by"]) for attempt in attempt_log)
             print(
-                f"{'FAIL' if problems else 'ok  '} [{case['name']} t{index}] parsers={modes} {record['elapsed_s']}s",
+                f"{'FAIL' if problems else 'ok  '} [{case['name']} t{index}] parsed by {modes} {record['elapsed_s']}s",
                 flush=True,
             )
             print(
@@ -416,10 +439,10 @@ def main() -> int:
     attempts = [attempt for record in records for attempt in record["attempts"]]
     modes: dict[str, int] = {}
     for attempt in attempts:
-        modes[str(attempt["parser_mode"])] = modes.get(str(attempt["parser_mode"]), 0) + 1
+        modes[str(attempt["parsed_by"])] = modes.get(str(attempt["parsed_by"]), 0) + 1
     final_modes: dict[str, int] = {}
     for record in records:
-        final_modes[str(record["parser_mode"])] = final_modes.get(str(record["parser_mode"]), 0) + 1
+        final_modes[str(record["parsed_by"])] = final_modes.get(str(record["parsed_by"]), 0) + 1
     violating = sum(1 for attempt in attempts if attempt["violating_ids"])
     print(f"\nattempts by parser: {modes}; final answers by parser: {final_modes}")
     print(f"attempts returning an ineligible id: {violating} of {len(attempts)}")
